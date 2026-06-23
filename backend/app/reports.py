@@ -66,6 +66,10 @@ class ReportService:
                 "p95_ms": percentile(latencies, 0.95),
             },
             track_summaries=list(session.tracks.values()),
+            events=sorted(events, key=lambda event: event.started_at),
+            timeline=sorted(session.timeline, key=lambda item: item.timestamp),
+            session_started_at=session.started_at,
+            session_ended_at=session.ended_at,
         )
         self.store.upsert("reports", report, id_field="session_id")
         return report

@@ -28,6 +28,17 @@ type TrackSummary = {
   ppe: Record<string, { ppe_code: string; state: string; ratio: number; severity: number }>;
 };
 
+type SafetyEvent = {
+  id: string; session_id: string; track_id: string; user_id?: string | null;
+  ppe_code: string; severity: number; started_at: string; ended_at?: string | null;
+  duration_seconds: number;
+};
+
+type ComplianceSnapshot = {
+  timestamp: string; track_id: string; user_id?: string | null;
+  ppe_code: string; state: string; severity: number; ratio: number;
+};
+
 type Detection = { class_name: string; confidence: number; box: number[]; track_id?: string | null; ppe_code?: string | null; evidence?: number | null };
 
 type FrameResult = {
@@ -41,7 +52,8 @@ type Report = {
   session_id: string; duration_seconds: number; required_ppe: string[];
   compliance_percent: number; events_by_severity: Record<string, number>;
   infractions: number; machine_cuts: number; latency: Record<string, number>;
-  track_summaries: TrackSummary[];
+  track_summaries: TrackSummary[]; events?: SafetyEvent[]; timeline?: ComplianceSnapshot[];
+  session_started_at?: string | null; session_ended_at?: string | null;
 };
 
 // Icons
@@ -899,6 +911,169 @@ function ComplianceDonut({ report }: { report: Report }) {
   );
 }
 
+
+const PPE_LABELS: Record<string, string> = {
+  helmet: "Capacete",
+  gloves: "Luvas",
+  goggles: "\u00d3culos",
+};
+
+function statusForSeverity(severity: number, state = "present") {
+  if (severity >= 3) return { label: "Corte", className: "danger" };
+  if (severity === 2) return { label: "Infra\u00e7\u00e3o", className: "warning" };
+  if (severity === 1) return { label: "Alerta", className: "notice" };
+  if (state !== "present") return { label: "Ausente", className: "missing" };
+  return { label: "Conforme", className: "ok" };
+}
+
+function SessionTimelineChart({ report }: { report: Report }) {
+  const snapshots = (report.timeline ?? []).slice().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const events = (report.events ?? []).slice().sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
+  const fallbackStart = snapshots[0]?.timestamp ?? events[0]?.started_at;
+  const startMs = report.session_started_at ? Date.parse(report.session_started_at) : fallbackStart ? Date.parse(fallbackStart) : Date.now();
+  const endMsFromReport = report.session_ended_at ? Date.parse(report.session_ended_at) : startMs + report.duration_seconds * 1000;
+  const endMsFromSnapshots = Math.max(endMsFromReport, ...snapshots.map((item) => Date.parse(item.timestamp)));
+  const endMsFromEvents = Math.max(endMsFromReport, ...events.map((event) => Date.parse(event.ended_at ?? report.session_ended_at ?? event.started_at)));
+  const endMs = Math.max(startMs + 1000, endMsFromSnapshots, endMsFromEvents);
+  const durationMs = endMs - startMs;
+
+  const rowKeys = Array.from(new Set([
+    ...report.track_summaries.flatMap((track) => report.required_ppe.map((code) => `${track.track_id}|${code}`)),
+    ...snapshots.map((item) => `${item.track_id}|${item.ppe_code}`),
+    ...events.map((event) => `${event.track_id}|${event.ppe_code}`),
+  ]));
+
+  const rows = rowKeys.map((key) => {
+    const [trackId, ppeCode] = key.split("|");
+    return {
+      key,
+      trackId,
+      ppeCode,
+      snapshots: snapshots.filter((item) => item.track_id === trackId && item.ppe_code === ppeCode),
+      events: events.filter((event) => event.track_id === trackId && event.ppe_code === ppeCode),
+    };
+  });
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+    ratio,
+    label: formatDuration((durationMs * ratio) / 1000),
+  }));
+
+  function segmentsFromSnapshots(items: ComplianceSnapshot[]) {
+    if (!items.length) return [];
+    const segments: Array<{ left: number; width: number; severity: number; state: string }> = [];
+    let current = items[0];
+    let segmentStart = Math.max(startMs, Date.parse(current.timestamp));
+    for (let i = 1; i < items.length; i += 1) {
+      const item = items[i];
+      const changed = item.state !== current.state || item.severity !== current.severity;
+      if (changed) {
+        const segmentEnd = Math.max(segmentStart + 500, Date.parse(item.timestamp));
+        segments.push({
+          left: ((segmentStart - startMs) / durationMs) * 100,
+          width: ((segmentEnd - segmentStart) / durationMs) * 100,
+          severity: current.severity,
+          state: current.state,
+        });
+        current = item;
+        segmentStart = Date.parse(item.timestamp);
+      }
+    }
+    const finalEnd = Math.max(segmentStart + 500, endMs);
+    segments.push({
+      left: ((segmentStart - startMs) / durationMs) * 100,
+      width: ((finalEnd - segmentStart) / durationMs) * 100,
+      severity: current.severity,
+      state: current.state,
+    });
+    return segments;
+  }
+
+  function segmentsFromEvents(rowEvents: SafetyEvent[], trackId: string) {
+    const track = report.track_summaries.find((item) => item.track_id === trackId);
+    const trackPercent = track?.samples ? (track.compliant_samples / track.samples) * 100 : 100;
+    if (!rowEvents.length) {
+      return [{ left: 0, width: 100, severity: trackPercent >= 99.5 ? 0 : -1, state: trackPercent >= 99.5 ? "present" : "unknown" }];
+    }
+    const segments: Array<{ left: number; width: number; severity: number; state: string }> = [];
+    let cursor = startMs;
+    rowEvents.forEach((event) => {
+      const eventStart = Math.max(startMs, Date.parse(event.started_at));
+      const eventEnd = Math.min(endMs, Date.parse(event.ended_at ?? report.session_ended_at ?? new Date(endMs).toISOString()));
+      if (eventStart > cursor) {
+        segments.push({ left: ((cursor - startMs) / durationMs) * 100, width: ((eventStart - cursor) / durationMs) * 100, severity: 0, state: "present" });
+      }
+      segments.push({ left: ((eventStart - startMs) / durationMs) * 100, width: Math.max(0.8, ((Math.max(eventEnd, eventStart + 500) - eventStart) / durationMs) * 100), severity: event.severity, state: "absent" });
+      cursor = Math.max(cursor, eventEnd);
+    });
+    if (cursor < endMs) {
+      segments.push({ left: ((cursor - startMs) / durationMs) * 100, width: ((endMs - cursor) / durationMs) * 100, severity: 0, state: "present" });
+    }
+    return segments;
+  }
+
+  return (
+    <div className="chart-card wide timeline-card">
+      <div className="chart-header timeline-header">
+        <div>
+          <div className="chart-title">{"Evolu\u00e7\u00e3o temporal da sess\u00e3o"}</div>
+          <div className="chart-subtitle">{"Momentos de conformidade, aus\u00eancia, alerta, infra\u00e7\u00e3o, corte e recupera\u00e7\u00e3o por EPI"}</div>
+        </div>
+        <div className="timeline-legend">
+          <span><i className="tl-ok" /> Conforme</span>
+          <span><i className="tl-missing" /> Ausente sem alerta</span>
+          <span><i className="tl-notice" /> {"N\u00edvel 1"}</span>
+          <span><i className="tl-warning" /> {"N\u00edvel 2"}</span>
+          <span><i className="tl-danger" /> {"N\u00edvel 3"}</span>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="timeline-empty">Sem eventos ou tracks suficientes para montar a linha do tempo.</div>
+      ) : (
+        <div className="timeline-table">
+          <div className="timeline-axis">
+            <span />
+            <div className="timeline-scale">
+              {ticks.map((tick) => (
+                <span key={tick.ratio} style={{ left: `${tick.ratio * 100}%` }}>{tick.label}</span>
+              ))}
+            </div>
+          </div>
+
+          {rows.map((row) => {
+            const segments = row.snapshots.length
+              ? segmentsFromSnapshots(row.snapshots)
+              : segmentsFromEvents(row.events, row.trackId);
+
+            return (
+              <div className="timeline-row" key={row.key}>
+                <div className="timeline-row-label">
+                  <strong>{row.trackId}</strong>
+                  <span>{PPE_LABELS[row.ppeCode] ?? row.ppeCode}</span>
+                </div>
+                <div className="timeline-line">
+                  {segments.map((segment, index) => {
+                    const status = statusForSeverity(segment.severity, segment.state);
+                    return (
+                      <div
+                        key={`${row.key}-${index}`}
+                        className={`timeline-segment ${status.className}`}
+                        style={{ left: `${Math.max(0, segment.left)}%`, width: `${Math.min(100, Math.max(0.8, segment.width))}%` }}
+                        title={`${PPE_LABELS[row.ppeCode] ?? row.ppeCode} ? ${status.label}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ReportView
 function ReportView({ report, token }: { report: Report; token: string }) {
   function downloadPdf() {
@@ -941,6 +1116,7 @@ function ReportView({ report, token }: { report: Report; token: string }) {
         <SeverityChart report={report} />
         <LatencyChart report={report} />
         <TrackComplianceChart report={report} />
+        <SessionTimelineChart report={report} />
       </div>
 
       <button className="download-btn" onClick={downloadPdf}>

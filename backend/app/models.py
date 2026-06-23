@@ -148,6 +148,16 @@ class TrackedPersonSummary(BaseModel):
     ppe: dict[str, PPECompliance] = Field(default_factory=dict)
 
 
+class ComplianceSnapshot(BaseModel):
+    timestamp: datetime
+    track_id: str
+    user_id: str | None = None
+    ppe_code: str
+    state: PPEState
+    severity: int = 0
+    ratio: float = 0
+
+
 class MonitoringSession(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ses"))
     user_id: str
@@ -160,6 +170,7 @@ class MonitoringSession(BaseModel):
     machine_locked: bool = False
     tracks: dict[str, TrackedPersonSummary] = Field(default_factory=dict)
     latency_metrics: list[LatencyMetric] = Field(default_factory=list)
+    timeline: list[ComplianceSnapshot] = Field(default_factory=list)
 
 
 class SafetyEvent(BaseModel):
@@ -207,6 +218,10 @@ class QualityReport(BaseModel):
     machine_cuts: int
     latency: dict[str, float]
     track_summaries: list[TrackedPersonSummary]
+    events: list[SafetyEvent] = Field(default_factory=list)
+    timeline: list[ComplianceSnapshot] = Field(default_factory=list)
+    session_started_at: datetime | None = None
+    session_ended_at: datetime | None = None
 
 
 class LoginRequest(BaseModel):

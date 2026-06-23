@@ -7,6 +7,7 @@ from typing import Deque
 
 from .machine import MachineSafetyPort
 from .models import (
+    ComplianceSnapshot,
     FrameDetection,
     Infraction,
     MonitoringSession,
@@ -134,6 +135,19 @@ class MonitoringEngine:
 
                 state.ratio = round(ratio, 3)
                 summary.ppe[code] = state
+                session.timeline.append(
+                    ComplianceSnapshot(
+                        timestamp=timestamp,
+                        track_id=track_id,
+                        user_id=user_id,
+                        ppe_code=code,
+                        state=state.state,
+                        severity=state.severity,
+                        ratio=state.ratio,
+                    )
+                )
+                if len(session.timeline) > 5000:
+                    session.timeline = session.timeline[-5000:]
                 if state.state != PPEState.present:
                     track_compliant = False
 
