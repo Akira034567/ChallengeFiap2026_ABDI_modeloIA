@@ -74,9 +74,11 @@ class MonitoringEngine:
         timestamp = timestamp or now_utc()
         ppe_by_code = {item.code: item for item in self.store.list("ppe", PPE)}
         output: list[dict] = []
+        current_track_ids: list[str] = []
 
         for raw_track_id, assigned in track_assignments.items():
             track_id = "employee" if session.mode.value == "individual" else raw_track_id
+            current_track_ids.append(track_id)
             user_id = session.user_id if session.mode.value == "individual" else None
             summary = session.tracks.get(track_id) or TrackedPersonSummary(
                 track_id=track_id, user_id=user_id
@@ -165,6 +167,7 @@ class MonitoringEngine:
                 }
             )
 
+        session.active_track_ids = current_track_ids
         self.store.upsert("sessions", session)
         return output
 
@@ -236,6 +239,12 @@ class MonitoringEngine:
     def active_tracks(self, session: MonitoringSession) -> list[TrackedPersonSummary]:
         if not session.tracks:
             return []
+        if session.active_track_ids:
+            return [
+                session.tracks[track_id]
+                for track_id in session.active_track_ids
+                if track_id in session.tracks
+            ]
         latest_seen = max(track.last_seen_at for track in session.tracks.values())
         cutoff = latest_seen - timedelta(seconds=max(4, self.policy.window_seconds * 2))
         return [track for track in session.tracks.values() if track.last_seen_at >= cutoff]
@@ -245,7 +254,11 @@ class MonitoringEngine:
         if not tracks:
             return False
         return all(
-            track.ppe.get(code) and track.ppe[code].state == PPEState.present
+            track.ppe.get(code)
+            and (
+                track.ppe[code].state == PPEState.present
+                or track.ppe[code].ratio >= self.policy.present_ratio
+            )
             for track in tracks
             for code in session.required_ppe
         )

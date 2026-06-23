@@ -107,3 +107,21 @@ def test_positive_evidence_can_beat_weaker_negative_for_same_track(tmp_path: Pat
         engine.process(session, {"P1": [negative, positive]}, start + timedelta(seconds=second))
 
     assert session.tracks["P1"].ppe["helmet"].state.value == "present"
+
+def test_reset_compliance_accepts_recent_positive_ratio(tmp_path: Path):
+    store = JsonStore(tmp_path / "store.json")
+    engine = MonitoringEngine(store, SimulationAdapter(store))
+    session = MonitoringSession(
+        id="ses_ratio_reset",
+        user_id="usr_employee",
+        mode=SessionMode.group,
+        required_ppe=["helmet"],
+    )
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    engine.process(session, {"P1": [detection("helmet", -1)]}, start)
+    engine.process(session, {"P1": [detection("helmet", 1)]}, start + timedelta(seconds=1))
+    engine.process(session, {"P1": [detection("helmet", 1)]}, start + timedelta(seconds=2))
+
+    assert session.tracks["P1"].ppe["helmet"].ratio >= 0.6
+    assert engine.all_tracks_compliant(session) is True

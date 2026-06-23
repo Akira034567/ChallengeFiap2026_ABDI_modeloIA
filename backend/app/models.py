@@ -169,6 +169,7 @@ class MonitoringSession(BaseModel):
     ended_at: datetime | None = None
     machine_locked: bool = False
     tracks: dict[str, TrackedPersonSummary] = Field(default_factory=dict)
+    active_track_ids: list[str] = Field(default_factory=list)
     latency_metrics: list[LatencyMetric] = Field(default_factory=list)
     timeline: list[ComplianceSnapshot] = Field(default_factory=list)
 

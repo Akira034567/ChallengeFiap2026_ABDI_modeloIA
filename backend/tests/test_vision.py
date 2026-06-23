@@ -113,3 +113,48 @@ def test_vision_assigns_negative_goggles_to_correct_person_only():
     assert len(assignments["P1"]) == 0
     assert assignments["P2"][0].ppe_code == "goggles"
     assert assignments["P2"][0].evidence == -1
+
+def test_vision_assigns_unmatched_positive_ppe_to_p1_when_group_has_multiple_people():
+    service = VisionService(Path("missing.pt"))
+    service.model = FakeModel(
+        Boxes(
+            [
+                [10, 20, 80, 190],
+                [120, 20, 190, 190],
+                [95, 5, 115, 18],
+            ],
+            [0.95, 0.95, 0.92],
+            [1, 1, 2],
+        )
+    )
+    frame = np.zeros((220, 220, 3), dtype=np.uint8)
+    ppe = [PPE(code="goggles", name="\u00d3culos", positive_class="Goggles", negative_class="No-Goggles")]
+
+    detections, assignments, _ = service.infer("ses_unmatched_positive", frame, ppe)
+
+    assert assignments["P1"][0].ppe_code == "goggles"
+    assert assignments["P1"][0].evidence == 1
+    assert next(item for item in detections if item.ppe_code == "goggles").track_id == "P1"
+
+
+def test_vision_does_not_assign_unmatched_negative_ppe_to_p1_in_group():
+    service = VisionService(Path("missing.pt"))
+    service.model = FakeModel(
+        Boxes(
+            [
+                [10, 20, 80, 190],
+                [120, 20, 190, 190],
+                [95, 5, 115, 18],
+            ],
+            [0.95, 0.95, 0.92],
+            [1, 1, 3],
+        )
+    )
+    frame = np.zeros((220, 220, 3), dtype=np.uint8)
+    ppe = [PPE(code="goggles", name="\u00d3culos", positive_class="Goggles", negative_class="No-Goggles")]
+
+    detections, assignments, _ = service.infer("ses_unmatched_negative", frame, ppe)
+
+    assert assignments["P1"] == []
+    assert assignments["P2"] == []
+    assert next(item for item in detections if item.ppe_code == "goggles").track_id is None

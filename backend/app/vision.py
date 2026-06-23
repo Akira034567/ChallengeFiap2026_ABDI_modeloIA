@@ -176,6 +176,8 @@ class VisionService:
             best_track = self._associate(detection, tracks)
             if not best_track and len(tracks) == 1:
                 best_track = next(iter(tracks))
+            if not best_track and detection.evidence == 1 and "P1" in tracks:
+                best_track = "P1"
             if best_track:
                 detection.track_id = best_track
                 assignments[best_track].append(detection)

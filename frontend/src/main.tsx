@@ -83,8 +83,8 @@ const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 function wsBase() {
   if (API_BASE) return API_BASE.replace(/^http/, "ws");
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const backendHost = location.port === "5173" ? `${location.hostname}:8000` : location.host;
+  const protocol = location.protocol === "https:" ?"wss" : "ws";
+  const backendHost = location.port === "5173" ?`${location.hostname}:8000` : location.host;
   return `${protocol}://${backendHost}`;
 }
 
@@ -247,7 +247,7 @@ function App() {
         <aside className="card side-card">
           <h2>Sessões recentes</h2>
           <div className="session-list">
-            {sessions.length === 0 ? (
+            {sessions.length === 0 ?(
               <div className="empty-state">
                 <div className="empty-icon-wrap"><IcHistory size={26} /></div>
                 <p>Nenhuma sessão ainda</p>
@@ -256,10 +256,10 @@ function App() {
               sessions.slice().reverse().slice(0, 6).map((s) => (
                 <div key={s.id} className="session-row">
                   <div className="session-row-top">
-                    <span className="session-mode">{s.mode === "individual" ? "Individual" : "Grupo"}</span>
-                    <span className={`badge ${s.status === "active" ? "badge-green" : "badge-muted"}`}>
+                    <span className="session-mode">{s.mode === "individual" ?"Individual" : "Grupo"}</span>
+                    <span className={`badge ${s.status === "active" ?"badge-green" : "badge-muted"}`}>
                       {s.status === "active" && <span className="dot dot-green" />}
-                      {s.status === "active" ? "Ativa" : "Finalizada"}
+                      {s.status === "active" ?"Ativa" : "Finalizada"}
                     </span>
                   </div>
                   <div className="session-time">{new Date(s.started_at).toLocaleString("pt-BR")}</div>
@@ -292,7 +292,7 @@ function App() {
 
         <nav className="topbar-nav">
           <button
-            className={`nav-tab ${view === "monitor" ? "active" : ""}`}
+            className={`nav-tab ${view === "monitor" ?"active" : ""}`}
             onClick={() => setView("monitor")}
           >
             <IcShield size={15} />
@@ -300,7 +300,7 @@ function App() {
             {activeSession && <span className="nav-badge" />}
           </button>
           <button
-            className={`nav-tab ${view === "history" ? "active" : ""}`}
+            className={`nav-tab ${view === "history" ?"active" : ""}`}
             onClick={() => setView("history")}
           >
             <IcHistory size={15} />
@@ -308,7 +308,7 @@ function App() {
           </button>
           {user.role === "admin" && (
             <button
-              className={`nav-tab ${view === "admin" ? "active" : ""}`}
+              className={`nav-tab ${view === "admin" ?"active" : ""}`}
               onClick={() => setView("admin")}
             >
               <IcSettings size={15} />
@@ -320,7 +320,7 @@ function App() {
         <div className="topbar-right">
           <div className="user-info">
             <div className="user-name">{user.name}</div>
-            <div className="user-role">{user.role === "admin" ? "Administrador" : "Funcionário"}</div>
+            <div className="user-role">{user.role === "admin" ?"Administrador" : "Funcionário"}</div>
           </div>
           <button className="btn-ghost btn-icon" onClick={logout} title="Sair">
             <IcLogout size={16} />
@@ -365,7 +365,7 @@ function Login({
           e.preventDefault();
           setLoading(true);
           try { await onLogin(username, password); }
-          catch (err) { setError(err instanceof Error ? err.message : "Falha no login"); }
+          catch (err) { setError(err instanceof Error ?err.message : "Falha no login"); }
           finally { setLoading(false); }
         }}
       >
@@ -386,7 +386,7 @@ function Login({
           <input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </div>
         <button className="btn-primary" disabled={loading} style={{ width: "100%", marginTop: ".25rem", padding: ".85rem" }}>
-          {loading ? "Entrando..." : "Entrar"}
+          {loading ?"Entrando..." : "Entrar"}
         </button>
         <div className="login-hint">
           Primeira execução: <strong>admin / admin123</strong> ou <strong>funcionario / func123</strong>
@@ -411,7 +411,7 @@ function StartSession({
     <div>
       <div className="section-header">
         <h1>Nova sessão de monitoramento</h1>
-        {canChoosePpe ? (
+        {canChoosePpe ?(
           <p className="muted">Como administrador, você pode iniciar uma leitura manual e escolher EPIs adicionais.</p>
         ) : (
           <p className="muted">Os EPIs desta leitura são definidos pelo preset vinculado pelo administrador.</p>
@@ -420,10 +420,10 @@ function StartSession({
 
       <div className="form-section-label">Modo de operação</div>
       <div className="mode-toggle">
-        <button type="button" className={mode === "individual" ? "active" : ""} onClick={() => setMode("individual")}>
+        <button type="button" className={mode === "individual" ?"active" : ""} onClick={() => setMode("individual")}>
           <IcUser size={15} /> Individual
         </button>
-        <button type="button" className={mode === "group" ? "active" : ""} onClick={() => setMode("group")}>
+        <button type="button" className={mode === "group" ?"active" : ""} onClick={() => setMode("group")}>
           <IcUser size={15} /> Grupo
         </button>
       </div>
@@ -433,7 +433,7 @@ function StartSession({
           <div className="linked-preset-label">Preset vinculado</div>
           <div className="linked-preset-name">{linkedPreset?.name ?? "Nenhum preset específico"}</div>
           <div className="linked-preset-ppe">
-            {employeePpe.length ? formatPpeNames(employeePpe, ppe) : "Sem preset vinculado; o sistema usará todos os EPIs cadastrados."}
+            {employeePpe.length ?formatPpeNames(employeePpe, ppe) : "Sem preset vinculado; o sistema usará todos os EPIs cadastrados."}
           </div>
         </div>
       )}
@@ -443,12 +443,12 @@ function StartSession({
           <div className="form-section-label">EPIs adicionais/manuais</div>
           <div className="ppe-grid">
             {ppe.map((item) => (
-              <label key={item.code} className={`ppe-item ${extra.includes(item.code) ? "checked" : ""}`}>
+              <label key={item.code} className={`ppe-item ${extra.includes(item.code) ?"checked" : ""}`}>
                 <input
                   type="checkbox"
                   checked={extra.includes(item.code)}
                   onChange={(e) =>
-                    setExtra((cur) => e.target.checked ? [...cur, item.code] : cur.filter((c) => c !== item.code))
+                    setExtra((cur) => e.target.checked ?[...cur, item.code] : cur.filter((c) => c !== item.code))
                   }
                 />
                 <div className="ppe-check">{extra.includes(item.code) && <IcCheck size={10} />}</div>
@@ -462,11 +462,11 @@ function StartSession({
       <button
         className="btn-primary"
         disabled={loading}
-        onClick={async () => { setLoading(true); await onStart(mode, canChoosePpe ? extra : []); setLoading(false); }}
+        onClick={async () => { setLoading(true); await onStart(mode, canChoosePpe ?extra : []); setLoading(false); }}
         style={{ marginTop: ".5rem" }}
       >
         <IcPlay size={14} />
-        {loading ? "Iniciando..." : "Iniciar monitoramento"}
+        {loading ?"Iniciando..." : "Iniciar monitoramento"}
       </button>
     </div>
   );
@@ -531,7 +531,7 @@ function Monitor({
         const parsed = JSON.parse(msg.data);
         if (parsed.error) { setStatus(parsed.error); return; }
         const sent = frames.current.get(parsed.frame_id);
-        const e2e = sent ? performance.now() - sent : parsed.server_total_ms;
+        const e2e = sent ?performance.now() - sent : parsed.server_total_ms;
         frames.current.delete(parsed.frame_id);
         setResult(parsed);
         setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks`);
@@ -564,8 +564,8 @@ function Monitor({
       next.detections.forEach((det) => {
         const [x1, y1, x2, y2] = det.box;
         const isPerson = det.class_name === "Person";
-        ctx.strokeStyle = isPerson ? "#38bdf8" : det.evidence === -1 ? "#ef4444" : "#22c55e";
-        ctx.lineWidth = isPerson ? 3 : 2;
+        ctx.strokeStyle = isPerson ?"#38bdf8" : det.evidence === -1 ?"#ef4444" : "#22c55e";
+        ctx.lineWidth = isPerson ?3 : 2;
         const drawX = canvas.width - x2 * sx;
         ctx.strokeRect(drawX, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
         ctx.fillStyle = ctx.strokeStyle;
@@ -573,11 +573,11 @@ function Monitor({
         ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
       });
     }
-    start().catch((err) => setStatus(err instanceof Error ? err.message : "Falha ao iniciar câmera"));
+    start().catch((err) => setStatus(err instanceof Error ?err.message : "Falha ao iniciar câmera"));
     return () => { stopMonitoring("Sessão encerrada"); };
   }, [session.id, token]);
 
-  const averageLatency = latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
+  const averageLatency = latencies.length ?latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
   const isLive = status.startsWith("Monitorando");
   const resetTracks = result?.tracks ?? Object.values(session.tracks ?? {}).map((track) => ({
     track_id: track.track_id,
@@ -586,12 +586,15 @@ function Monitor({
   }));
   const hasResetTracks = resetTracks.length > 0;
   const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
-    session.required_ppe.every((code) => track.ppe[code]?.state === "present")
+    session.required_ppe.every((code) => {
+      const item = track.ppe[code];
+      return item?.state === "present" || (item?.ratio ?? 0) >= 0.6;
+    })
   );
   const resetHint = !hasResetTracks
-    ? "Aguardando a câmera reconhecer a pessoa e os EPIs obrigatórios."
+    ?"Aguardando a câmera reconhecer a pessoa e os EPIs obrigatórios."
     : resetReady
-      ? "Todos os EPIs obrigatórios estão conformes. Reset liberado."
+      ?"Todos os EPIs obrigatórios estão conformes. Reset liberado."
       : "Reset bloqueado: todos os EPIs obrigatórios precisam estar visíveis e conformes.";
 
   return (
@@ -599,26 +602,26 @@ function Monitor({
       {/* Header with controls always visible */}
       <div className="monitor-header">
         <div className="monitor-title">
-          <h1>Sessão {session.mode === "individual" ? "individual" : "em grupo"}</h1>
+          <h1>Sessão {session.mode === "individual" ?"individual" : "em grupo"}</h1>
           <div className="monitor-status">
-            <span className={`dot ${isLive ? "dot-blue" : "dot-amber"}`} />
+            <span className={`dot ${isLive ?"dot-blue" : "dot-amber"}`} />
             {status}
           </div>
         </div>
         <div className="monitor-controls">
-          <div className={`machine-status ${session.machine_locked ? "danger" : "ok"}`}>
-            {session.machine_locked ? <IcLock size={13} /> : <IcUnlock size={13} />}
-            {session.machine_locked ? "CORTE SIMULADO" : "Máquina liberada"}
+          <div className={`machine-status ${session.machine_locked ?"danger" : "ok"}`}>
+            {session.machine_locked ?<IcLock size={13} /> : <IcUnlock size={13} />}
+            {session.machine_locked ?"CORTE SIMULADO" : "Máquina liberada"}
           </div>
           {session.machine_locked && (
             <div className="reset-control">
               <button className="btn-sm" onClick={onReset} disabled={!resetReady} title={resetHint}>
                 <IcRefresh size={13} /> Resetar
               </button>
-              <span className={`reset-hint ${resetReady ? "ok" : "blocked"}`}>{resetHint}</span>
+              <span className={`reset-hint ${resetReady ?"ok" : "blocked"}`}>{resetHint}</span>
             </div>
           )}
-          {!confirmEnd ? (
+          {!confirmEnd ?(
             <button className="btn-danger btn-sm" onClick={() => setConfirmEnd(true)}>
               <IcStop size={13} /> Encerrar sessão
             </button>
@@ -626,7 +629,7 @@ function Monitor({
             <div className="confirm-end">
               <span>Encerrar sessão?</span>
               <button className="btn-danger btn-sm" onClick={handleEndSession} disabled={ending}>
-                {ending ? "Encerrando..." : "Confirmar"}
+                {ending ?"Encerrando..." : "Confirmar"}
               </button>
               <button className="btn-sm" onClick={() => setConfirmEnd(false)}>Cancelar</button>
             </div>
@@ -663,26 +666,38 @@ function Monitor({
       {/* Track Cards */}
       <div className="track-grid">
         {(result?.tracks ?? []).map((track) => {
-          const displayCompliant = track.compliant && !session.machine_locked;
+          const trackBlocked = session.required_ppe.some((code) => {
+            const item = track.ppe[code];
+            return item && item.state !== "present" && (item.severity ?? 0) >= 3;
+          });
+          const trackAlert = session.required_ppe.some((code) => {
+            const item = track.ppe[code];
+            return !item || item.state !== "present";
+          });
+          const displayCompliant = track.compliant && !trackAlert;
           return (
-          <div key={track.track_id} className={`track-card ${displayCompliant ? "ok" : "alert"}`}>
+          <div key={track.track_id} className={`track-card ${displayCompliant ?"ok" : "alert"}`}>
             <div className="track-card-header">
               <span className="track-id">Track {track.track_id}</span>
-              <span className={`badge ${displayCompliant ? "badge-green" : "badge-red"}`}>
-                <span className={`dot ${displayCompliant ? "dot-green" : "dot-red"}`} />
-                {displayCompliant ? "Conforme" : session.machine_locked ? "Aguardando reset" : "Alerta"}
+              <span className={`badge ${displayCompliant ?"badge-green" : "badge-red"}`}>
+                <span className={`dot ${displayCompliant ?"dot-green" : "dot-red"}`} />
+                {displayCompliant ?"Conforme" : trackBlocked ?"Bloqueado" : "Alerta"}
               </span>
             </div>
             <div className="track-ppe-list">
               {session.required_ppe.map((code) => {
                 const item = track.ppe[code];
                 const state = item?.state ?? "unknown";
-                const displayState = session.machine_locked ? "absent" : state;
-                const statusText = session.machine_locked ? "Reset pendente" : `${state === "present" ? "✓" : state === "absent" ? "✕" : "?"} Nível ${item?.severity ?? 0}`;
+                const severity = item?.severity ?? 0;
+                const statusText = state === "present"
+                  ?`✓ Nível ${severity}`
+                  : trackBlocked && severity >= 3
+                    ?"Bloqueio pendente"
+                    : `${state === "absent" ?"✕" : "?"} Nível ${severity}`;
                 return (
                   <div key={code} className="track-ppe-item">
                     <span className="track-ppe-name">{ppeName[code] ?? code}</span>
-                    <span className={`track-ppe-status ${displayState}`}>
+                    <span className={`track-ppe-status ${state}`}>
                       {statusText}
                     </span>
                   </div>
@@ -710,7 +725,7 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
       const report = await api<Report>(`/api/reports/${sessionId}`, token);
       setSelectedReport(report);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Erro ao carregar relatório");
+      setLoadError(err instanceof Error ?err.message : "Erro ao carregar relatório");
     } finally {
       setLoadingId(null);
     }
@@ -736,12 +751,12 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
     <div>
       <div className="section-header">
         <h1>Histórico de sessões</h1>
-        <p className="muted">{sessions.length} {sessions.length === 1 ? "sessão registrada" : "sessões registradas"} neste sistema.</p>
+        <p className="muted">{sessions.length} {sessions.length === 1 ?"sessão registrada" : "sessões registradas"} neste sistema.</p>
       </div>
 
       {loadError && <div className="toast" style={{ marginBottom: "1rem" }}>{loadError}</div>}
 
-      {sessions.length === 0 ? (
+      {sessions.length === 0 ?(
         <div className="empty-state" style={{ padding: "4rem 1rem" }}>
           <div className="empty-icon-wrap"><IcHistory size={32} /></div>
           <p>Nenhuma sessão registrada</p>
@@ -754,14 +769,14 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
           {sorted.map((s) => {
             const duration =
               s.ended_at
-                ? (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
+                ?(new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
                 : null;
             const trackCount = Object.keys(s.tracks ?? {}).length;
             return (
               <div key={s.id} className="history-row">
                 <div className="history-info">
                   <div className="history-mode">
-                    {s.mode === "individual" ? "Sessão individual" : "Sessão em grupo"}
+                    {s.mode === "individual" ?"Sessão individual" : "Sessão em grupo"}
                   </div>
                   <div className="history-meta">
                     <span className="history-meta-item">
@@ -777,15 +792,15 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
                     {trackCount > 0 && (
                       <span className="history-meta-item">
                         <IcUser size={12} />
-                        {trackCount} {trackCount === 1 ? "pessoa" : "pessoas"}
+                        {trackCount} {trackCount === 1 ?"pessoa" : "pessoas"}
                       </span>
                     )}
                   </div>
                 </div>
                 <div className="history-row-right">
-                  <span className={`badge ${s.status === "active" ? "badge-green" : "badge-muted"}`}>
+                  <span className={`badge ${s.status === "active" ?"badge-green" : "badge-muted"}`}>
                     {s.status === "active" && <span className="dot dot-green" />}
-                    {s.status === "active" ? "Ativa" : "Finalizada"}
+                    {s.status === "active" ?"Ativa" : "Finalizada"}
                   </span>
                   {s.status === "finished" && (
                     <button
@@ -793,7 +808,7 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
                       onClick={() => viewReport(s.id)}
                       disabled={loadingId === s.id}
                     >
-                      {loadingId === s.id ? "Carregando..." : "Ver relatório"}
+                      {loadingId === s.id ?"Carregando..." : "Ver relatório"}
                     </button>
                   )}
                 </div>
@@ -810,9 +825,9 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
 function TrackComplianceChart({ report }: { report: Report }) {
   const rows = report.track_summaries.slice(0, 6).map((t) => ({
     label: t.track_id,
-    value: t.samples ? (t.compliant_samples / t.samples) * 100 : 0,
+    value: t.samples ?(t.compliant_samples / t.samples) * 100 : 0,
   }));
-  const data = rows.length ? rows : [{ label: "Sem tracks", value: 0 }];
+  const data = rows.length ?rows : [{ label: "Sem tracks", value: 0 }];
   return (
     <div className="chart-card wide">
       <div className="chart-header">
@@ -890,7 +905,7 @@ function LatencyChart({ report }: { report: Report }) {
 function ComplianceDonut({ report }: { report: Report }) {
   const value = Math.max(0, Math.min(100, report.compliance_percent));
   const circumference = 2 * Math.PI * 42;
-  const color = value >= 80 ? "#10b981" : value >= 50 ? "#f59e0b" : "#ef4444";
+  const color = value >= 80 ?"#10b981" : value >= 50 ?"#f59e0b" : "#ef4444";
   return (
     <div className="chart-card donut-card">
       <div className="chart-header">
@@ -930,8 +945,8 @@ function SessionTimelineChart({ report }: { report: Report }) {
   const snapshots = (report.timeline ?? []).slice().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const events = (report.events ?? []).slice().sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
   const fallbackStart = snapshots[0]?.timestamp ?? events[0]?.started_at;
-  const startMs = report.session_started_at ? Date.parse(report.session_started_at) : fallbackStart ? Date.parse(fallbackStart) : Date.now();
-  const endMsFromReport = report.session_ended_at ? Date.parse(report.session_ended_at) : startMs + report.duration_seconds * 1000;
+  const startMs = report.session_started_at ?Date.parse(report.session_started_at) : fallbackStart ?Date.parse(fallbackStart) : Date.now();
+  const endMsFromReport = report.session_ended_at ?Date.parse(report.session_ended_at) : startMs + report.duration_seconds * 1000;
   const endMsFromSnapshots = Math.max(endMsFromReport, ...snapshots.map((item) => Date.parse(item.timestamp)));
   const endMsFromEvents = Math.max(endMsFromReport, ...events.map((event) => Date.parse(event.ended_at ?? report.session_ended_at ?? event.started_at)));
   const endMs = Math.max(startMs + 1000, endMsFromSnapshots, endMsFromEvents);
@@ -991,9 +1006,9 @@ function SessionTimelineChart({ report }: { report: Report }) {
 
   function segmentsFromEvents(rowEvents: SafetyEvent[], trackId: string) {
     const track = report.track_summaries.find((item) => item.track_id === trackId);
-    const trackPercent = track?.samples ? (track.compliant_samples / track.samples) * 100 : 100;
+    const trackPercent = track?.samples ?(track.compliant_samples / track.samples) * 100 : 100;
     if (!rowEvents.length) {
-      return [{ left: 0, width: 100, severity: trackPercent >= 99.5 ? 0 : -1, state: trackPercent >= 99.5 ? "present" : "unknown" }];
+      return [{ left: 0, width: 100, severity: trackPercent >= 99.5 ?0 : -1, state: trackPercent >= 99.5 ?"present" : "unknown" }];
     }
     const segments: Array<{ left: number; width: number; severity: number; state: string }> = [];
     let cursor = startMs;
@@ -1028,7 +1043,7 @@ function SessionTimelineChart({ report }: { report: Report }) {
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 ?(
         <div className="timeline-empty">Sem eventos ou tracks suficientes para montar a linha do tempo.</div>
       ) : (
         <div className="timeline-table">
@@ -1043,7 +1058,7 @@ function SessionTimelineChart({ report }: { report: Report }) {
 
           {rows.map((row) => {
             const segments = row.snapshots.length
-              ? segmentsFromSnapshots(row.snapshots)
+              ?segmentsFromSnapshots(row.snapshots)
               : segmentsFromEvents(row.events, row.trackId);
 
             return (
@@ -1096,17 +1111,17 @@ function ReportView({ report, token }: { report: Report; token: string }) {
           <div className="metric-label">Duração</div>
         </div>
         <div className="metric-card">
-          <div className="metric-value" style={{ color: report.compliance_percent >= 80 ? "#34d399" : report.compliance_percent >= 50 ? "#fcd34d" : "#f87171" }}>
+          <div className="metric-value" style={{ color: report.compliance_percent >= 80 ?"#34d399" : report.compliance_percent >= 50 ?"#fcd34d" : "#f87171" }}>
             {report.compliance_percent.toFixed(1)}%
           </div>
           <div className="metric-label">Conformidade</div>
         </div>
         <div className="metric-card">
-          <div className="metric-value" style={{ color: report.infractions > 0 ? "#fca5a5" : undefined }}>{report.infractions}</div>
+          <div className="metric-value" style={{ color: report.infractions > 0 ?"#fca5a5" : undefined }}>{report.infractions}</div>
           <div className="metric-label">Infrações</div>
         </div>
         <div className="metric-card">
-          <div className="metric-value" style={{ color: report.machine_cuts > 0 ? "#f87171" : undefined }}>{report.machine_cuts}</div>
+          <div className="metric-value" style={{ color: report.machine_cuts > 0 ?"#f87171" : undefined }}>{report.machine_cuts}</div>
           <div className="metric-label">Cortes simulados</div>
         </div>
       </div>
@@ -1173,7 +1188,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       setMessage({ type: "success", text: "Funcionário cadastrado com sucesso." });
       await load();
     } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao cadastrar funcionário." });
+      setMessage({ type: "error", text: err instanceof Error ?err.message : "Erro ao cadastrar funcionário." });
     }
   }
 
@@ -1191,7 +1206,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       setMessage({ type: "success", text: "Preset salvo com sucesso." });
       await load();
     } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao salvar preset." });
+      setMessage({ type: "error", text: err instanceof Error ?err.message : "Erro ao salvar preset." });
     }
   }
 
@@ -1205,7 +1220,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       setMessage({ type: "success", text: "Preset do funcionário atualizado." });
       await load();
     } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao vincular preset." });
+      setMessage({ type: "error", text: err instanceof Error ?err.message : "Erro ao vincular preset." });
     }
   }
 
@@ -1224,7 +1239,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
         <div className="metrics">
           <div className="metric-card"><div className="metric-value">{dashboard.users}</div><div className="metric-label">Usuários</div></div>
           <div className="metric-card"><div className="metric-value">{dashboard.active_sessions}</div><div className="metric-label">Sessões ativas</div></div>
-          <div className="metric-card"><div className="metric-value" style={{ color: dashboard.infractions > 0 ? "#fca5a5" : undefined }}>{dashboard.infractions}</div><div className="metric-label">Infrações</div></div>
+          <div className="metric-card"><div className="metric-value" style={{ color: dashboard.infractions > 0 ?"#fca5a5" : undefined }}>{dashboard.infractions}</div><div className="metric-label">Infrações</div></div>
           <div className="metric-card"><div className="metric-value">{dashboard.average_latency_ms} ms</div><div className="metric-label">Latência média</div></div>
         </div>
       )}
@@ -1257,7 +1272,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
             {ppe.map((item) => (
               <label key={item.code}>
                 <input type="checkbox" checked={presetPpe.includes(item.code)}
-                  onChange={(e) => setPresetPpe((cur) => e.target.checked ? [...cur, item.code] : cur.filter((c) => c !== item.code))}
+                  onChange={(e) => setPresetPpe((cur) => e.target.checked ?[...cur, item.code] : cur.filter((c) => c !== item.code))}
                 />
                 {item.name}
               </label>
@@ -1287,7 +1302,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
                     </select>
                     {linked && <div className="table-help">{formatPpeNames(linked.ppe_codes, ppe)}</div>}
                   </td>
-                  <td><span className={`badge ${u.active ? "badge-green" : "badge-muted"}`}>{u.active ? "Ativo" : "Inativo"}</span></td>
+                  <td><span className={`badge ${u.active ?"badge-green" : "badge-muted"}`}>{u.active ?"Ativo" : "Inativo"}</span></td>
                 </tr>
               );
             })}
@@ -1304,7 +1319,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
               <tr key={preset.id}>
                 <td>{preset.name}</td>
                 <td style={{ color: "var(--tx-secondary)" }}>{preset.ppe_codes.map((code) => names[code] ?? code).join(", ")}</td>
-                <td><span className={`badge ${preset.active ? "badge-blue" : "badge-muted"}`}>{preset.active ? "Ativo" : "Inativo"}</span></td>
+                <td><span className={`badge ${preset.active ?"badge-blue" : "badge-muted"}`}>{preset.active ?"Ativo" : "Inativo"}</span></td>
               </tr>
             ))}
           </tbody>
