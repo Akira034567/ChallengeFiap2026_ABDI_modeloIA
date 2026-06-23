@@ -1,101 +1,72 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
+// ─────────────────────────── Types ───────────────────────────
 type Role = "employee" | "admin";
 type SessionMode = "individual" | "group";
 type SessionStatus = "active" | "finished";
+type AppView = "monitor" | "history" | "admin";
 
-type User = {
-  id: string;
-  name: string;
-  username: string;
-  role: Role;
-  job_role_id?: string | null;
-  area_id?: string | null;
-  active: boolean;
-};
-
-type PPE = {
-  code: string;
-  name: string;
-  positive_class: string;
-  negative_class: string;
-};
-
-type Preset = {
-  id: string;
-  name: string;
-  ppe_codes: string[];
-  active: boolean;
-};
-
+type User = { id: string; name: string; username: string; role: Role; job_role_id?: string | null; area_id?: string | null; active: boolean };
+type PPE = { code: string; name: string; positive_class: string; negative_class: string };
+type Preset = { id: string; name: string; ppe_codes: string[]; active: boolean };
 type JobRole = { id: string; name: string; preset_id?: string | null };
 type Area = { id: string; name: string; preset_id?: string | null };
 
 type Session = {
-  id: string;
-  user_id: string;
-  mode: SessionMode;
-  preset_id?: string | null;
-  required_ppe: string[];
-  status: SessionStatus;
-  started_at: string;
-  ended_at?: string | null;
-  machine_locked: boolean;
-  tracks: Record<string, TrackSummary>;
-  latency_metrics: LatencyMetric[];
+  id: string; user_id: string; mode: SessionMode; preset_id?: string | null;
+  required_ppe: string[]; status: SessionStatus; started_at: string;
+  ended_at?: string | null; machine_locked: boolean;
+  tracks: Record<string, TrackSummary>; latency_metrics: LatencyMetric[];
 };
 
-type LatencyMetric = {
-  frame_id: string;
-  inference_ms: number;
-  processing_ms: number;
-  server_total_ms: number;
-};
+type LatencyMetric = { frame_id: string; inference_ms: number; processing_ms: number; server_total_ms: number };
 
 type TrackSummary = {
-  track_id: string;
-  user_id?: string | null;
-  samples: number;
-  compliant_samples: number;
+  track_id: string; user_id?: string | null; samples: number; compliant_samples: number;
   ppe: Record<string, { ppe_code: string; state: string; ratio: number; severity: number }>;
 };
 
-type Detection = {
-  class_name: string;
-  confidence: number;
-  box: number[];
-  track_id?: string | null;
-  ppe_code?: string | null;
-  evidence?: number | null;
-};
+type Detection = { class_name: string; confidence: number; box: number[]; track_id?: string | null; ppe_code?: string | null; evidence?: number | null };
 
 type FrameResult = {
-  frame_id: string;
-  image_width: number;
-  image_height: number;
-  detections: Detection[];
+  frame_id: string; image_width: number; image_height: number; detections: Detection[];
   tracks: Array<{ track_id: string; ppe: Record<string, { state: string; ratio: number; severity: number }>; compliant: boolean }>;
-  machine_locked: boolean;
-  inference_ms: number;
-  processing_ms: number;
-  server_total_ms: number;
-  server_sent_at_ms: number;
+  machine_locked: boolean; inference_ms: number; processing_ms: number;
+  server_total_ms: number; server_sent_at_ms: number;
 };
 
 type Report = {
-  session_id: string;
-  duration_seconds: number;
-  required_ppe: string[];
-  compliance_percent: number;
-  events_by_severity: Record<string, number>;
-  infractions: number;
-  machine_cuts: number;
-  latency: Record<string, number>;
+  session_id: string; duration_seconds: number; required_ppe: string[];
+  compliance_percent: number; events_by_severity: Record<string, number>;
+  infractions: number; machine_cuts: number; latency: Record<string, number>;
   track_summaries: TrackSummary[];
 };
 
+// ─────────────────────────── Icons ───────────────────────────
+type IP = { size?: number };
+const sv = (size: number, children: React.ReactNode) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const IcMonitor  = ({ size = 18 }: IP) => sv(size, <><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></>);
+const IcHistory  = ({ size = 18 }: IP) => sv(size, <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>);
+const IcSettings = ({ size = 18 }: IP) => sv(size, <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></>);
+const IcLogout   = ({ size = 16 }: IP) => sv(size, <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>);
+const IcPlay     = ({ size = 16 }: IP) => sv(size, <><polygon points="5 3 19 12 5 21 5 3"/></>);
+const IcStop     = ({ size = 14 }: IP) => sv(size, <><rect x="3" y="3" width="18" height="18" rx="2"/></>);
+const IcRefresh  = ({ size = 14 }: IP) => sv(size, <><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></>);
+const IcDownload = ({ size = 15 }: IP) => sv(size, <><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
+const IcCheck    = ({ size = 11 }: IP) => sv(size, <><polyline points="20 6 9 17 4 12"/></>);
+const IcBack     = ({ size = 16 }: IP) => sv(size, <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>);
+const IcLock     = ({ size = 14 }: IP) => sv(size, <><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></>);
+const IcUnlock   = ({ size = 14 }: IP) => sv(size, <><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 019.9-1"/></>);
+const IcClock    = ({ size = 13 }: IP) => sv(size, <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>);
+const IcCalendar = ({ size = 13 }: IP) => sv(size, <><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>);
+const IcShield   = ({ size = 16 }: IP) => sv(size, <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>);
+const IcUser     = ({ size = 15 }: IP) => sv(size, <><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>);
+
+// ─────────────────────────── API ───────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 function wsBase() {
@@ -123,6 +94,14 @@ function percentile(values: number[], p: number) {
   return sorted[Math.min(sorted.length - 1, Math.round((sorted.length - 1) * p))];
 }
 
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${seconds.toFixed(0)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}min ${s}s`;
+}
+
+// ─────────────────────────── App ───────────────────────────
 function App() {
   const [token, setToken] = useState(localStorage.getItem("token") ?? "");
   const [user, setUser] = useState<User | null>(null);
@@ -131,6 +110,7 @@ function App() {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
+  const [view, setView] = useState<AppView>("monitor");
 
   async function bootstrap(nextToken = token) {
     if (!nextToken) return;
@@ -142,21 +122,17 @@ function App() {
     setUser(me);
     setPpe(ppeList);
     setSessions(sessionList);
-    setActiveSession(sessionList.find((item) => item.status === "active") ?? null);
+    setActiveSession(sessionList.find((s) => s.status === "active") ?? null);
   }
 
   useEffect(() => {
-    bootstrap().catch(() => {
-      localStorage.removeItem("token");
-      setToken("");
-    });
+    bootstrap().catch(() => { localStorage.removeItem("token"); setToken(""); });
   }, []);
 
   async function handleLogin(username: string, password: string) {
     setError("");
     const response = await api<{ access_token: string; user: User }>("/api/auth/login", undefined, {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
+      method: "POST", body: JSON.stringify({ username, password }),
     });
     localStorage.setItem("token", response.access_token);
     setToken(response.access_token);
@@ -166,27 +142,23 @@ function App() {
 
   function logout() {
     localStorage.removeItem("token");
-    setToken("");
-    setUser(null);
-    setActiveSession(null);
-    setReport(null);
+    setToken(""); setUser(null); setActiveSession(null); setReport(null);
   }
 
   async function createSession(mode: SessionMode, additional_ppe: string[]) {
     const session = await api<Session>("/api/sessions", token, {
-      method: "POST",
-      body: JSON.stringify({ mode, additional_ppe }),
+      method: "POST", body: JSON.stringify({ mode, additional_ppe }),
     });
     setActiveSession(session);
     setReport(null);
+    setView("monitor");
     await bootstrap();
   }
 
   async function endSession() {
     if (!activeSession) return;
     const generated = await api<Report>(`/api/sessions/${activeSession.id}/end`, token, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Encerrada pelo operador" }),
+      method: "POST", body: JSON.stringify({ reason: "Encerrada pelo operador" }),
     });
     setReport(generated);
     setActiveSession(null);
@@ -204,61 +176,145 @@ function App() {
     return <Login onLogin={handleLogin} error={error} setError={setError} />;
   }
 
+  function renderMonitorView() {
+    if (activeSession) {
+      return (
+        <div className="card">
+          <Monitor
+            token={token} session={activeSession} ppe={ppe}
+            onEnd={endSession} onReset={resetMachine} onSessionUpdate={setActiveSession}
+          />
+        </div>
+      );
+    }
+    if (report) {
+      return (
+        <div className="card">
+          <div className="view-nav">
+            <button className="btn-back" onClick={() => setReport(null)}>
+              <IcBack size={14} /> Nova sessão
+            </button>
+            <h2>Relatório da sessão</h2>
+          </div>
+          <ReportView report={report} token={token} />
+        </div>
+      );
+    }
+    return (
+      <div className="start-grid">
+        <div className="card">
+          <StartSession ppe={ppe} onStart={createSession} />
+        </div>
+        <aside className="card side-card">
+          <h2>Sessões recentes</h2>
+          <div className="session-list">
+            {sessions.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon-wrap"><IcHistory size={26} /></div>
+                <p>Nenhuma sessão ainda</p>
+              </div>
+            ) : (
+              sessions.slice().reverse().slice(0, 6).map((s) => (
+                <div key={s.id} className="session-row">
+                  <div className="session-row-top">
+                    <span className="session-mode">{s.mode === "individual" ? "Individual" : "Grupo"}</span>
+                    <span className={`badge ${s.status === "active" ? "badge-green" : "badge-muted"}`}>
+                      {s.status === "active" && <span className="dot dot-green" />}
+                      {s.status === "active" ? "Ativa" : "Finalizada"}
+                    </span>
+                  </div>
+                  <div className="session-time">{new Date(s.started_at).toLocaleString("pt-BR")}</div>
+                </div>
+              ))
+            )}
+          </div>
+          {sessions.length > 6 && (
+            <button className="btn-ghost btn-sm" style={{ marginTop: ".75rem", width: "100%" }} onClick={() => setView("history")}>
+              Ver histórico completo
+            </button>
+          )}
+        </aside>
+      </div>
+    );
+  }
+
   return (
     <div className="shell">
       <header className="topbar">
-        <div>
-          <strong>EPI Guard</strong>
-          <span>Monitoramento local de EPIs</span>
+        <div className="topbar-brand">
+          <div className="topbar-logo">
+            <img src="/logo.jpg" alt="Code&Ops" />
+          </div>
+          <div>
+            <div className="app-name">EPI Guard</div>
+            <div className="app-subtitle">Monitoramento inteligente de EPIs</div>
+          </div>
         </div>
-        <div className="user-pill">
-          {user.name} · {user.role === "admin" ? "Admin" : "Funcionário"}
-          <button onClick={logout}>Sair</button>
+
+        <nav className="topbar-nav">
+          <button
+            className={`nav-tab ${view === "monitor" ? "active" : ""}`}
+            onClick={() => setView("monitor")}
+          >
+            <IcShield size={15} />
+            <span>Monitoramento</span>
+            {activeSession && <span className="nav-badge" />}
+          </button>
+          <button
+            className={`nav-tab ${view === "history" ? "active" : ""}`}
+            onClick={() => setView("history")}
+          >
+            <IcHistory size={15} />
+            <span>Histórico</span>
+          </button>
+          {user.role === "admin" && (
+            <button
+              className={`nav-tab ${view === "admin" ? "active" : ""}`}
+              onClick={() => setView("admin")}
+            >
+              <IcSettings size={15} />
+              <span>Administração</span>
+            </button>
+          )}
+        </nav>
+
+        <div className="topbar-right">
+          <div className="user-info">
+            <div className="user-name">{user.name}</div>
+            <div className="user-role">{user.role === "admin" ? "Administrador" : "Funcionário"}</div>
+          </div>
+          <button className="btn-ghost btn-icon" onClick={logout} title="Sair">
+            <IcLogout size={16} />
+          </button>
         </div>
       </header>
 
-      {error && <div className="toast">{error}</div>}
+      {error && (
+        <div className="toast">
+          <IcShield size={15} />
+          {error}
+        </div>
+      )}
 
-      <main className="grid">
-        <section className="card main-card">
-          {!activeSession ? (
-            <StartSession ppe={ppe} onStart={createSession} report={report} token={token} />
-          ) : (
-            <Monitor
-              token={token}
-              session={activeSession}
-              ppe={ppe}
-              onEnd={endSession}
-              onReset={resetMachine}
-              onSessionUpdate={setActiveSession}
-            />
-          )}
-        </section>
-
-        <aside className="card side-card">
-          <h2>Histórico</h2>
-          <div className="session-list">
-            {sessions.slice().reverse().map((session) => (
-              <div key={session.id} className="session-row">
-                <span>{session.mode === "individual" ? "Individual" : "Grupo"}</span>
-                <strong>{session.status === "active" ? "Ativa" : "Finalizada"}</strong>
-                <small>{new Date(session.started_at).toLocaleString()}</small>
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        {user.role === "admin" && (
-          <section className="card admin-card">
-            <AdminPanel token={token} ppe={ppe} />
-          </section>
-        )}
-      </main>
+      {view === "monitor" && renderMonitorView()}
+      {view === "history" && (
+        <div className="card">
+          <HistoryView sessions={sessions} token={token} />
+        </div>
+      )}
+      {view === "admin" && user.role === "admin" && (
+        <div className="card">
+          <AdminPanel token={token} ppe={ppe} />
+        </div>
+      )}
     </div>
   );
 }
 
-function Login({ onLogin, error, setError }: { onLogin: (u: string, p: string) => Promise<void>; error: string; setError: (e: string) => void }) {
+// ─────────────────────────── Login ───────────────────────────
+function Login({
+  onLogin, error, setError,
+}: { onLogin: (u: string, p: string) => Promise<void>; error: string; setError: (e: string) => void }) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("admin123");
   const [loading, setLoading] = useState(false);
@@ -266,77 +322,100 @@ function Login({ onLogin, error, setError }: { onLogin: (u: string, p: string) =
     <div className="login-page">
       <form
         className="login-card"
-        onSubmit={async (event) => {
-          event.preventDefault();
+        onSubmit={async (e) => {
+          e.preventDefault();
           setLoading(true);
-          try {
-            await onLogin(username, password);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Falha no login");
-          } finally {
-            setLoading(false);
-          }
+          try { await onLogin(username, password); }
+          catch (err) { setError(err instanceof Error ? err.message : "Falha no login"); }
+          finally { setLoading(false); }
         }}
       >
-        <div className="logo">EPI</div>
-        <h1>Entrar no EPI Guard</h1>
-        <p>Use `admin/admin123` ou `funcionario/func123` para a primeira execução local.</p>
-        <label>
-          Login
-          <input value={username} onChange={(event) => setUsername(event.target.value)} />
-        </label>
-        <label>
-          Senha
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
-        {error && <div className="error">{error}</div>}
-        <button disabled={loading}>{loading ? "Entrando..." : "Entrar"}</button>
+        <div className="login-header">
+          <div className="login-logo"><img src="/logo.jpg" alt="Code&Ops" /></div>
+          <div>
+            <h1>EPI Guard</h1>
+            <p className="login-subtitle">Monitoramento inteligente de EPIs</p>
+          </div>
+        </div>
+        {error && <div className="login-error">{error}</div>}
+        <div className="login-field">
+          <label>Login</label>
+          <input value={username} autoComplete="username" onChange={(e) => setUsername(e.target.value)} placeholder="Usuário" />
+        </div>
+        <div className="login-field">
+          <label>Senha</label>
+          <input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+        </div>
+        <button className="btn-primary" disabled={loading} style={{ width: "100%", marginTop: ".25rem", padding: ".85rem" }}>
+          {loading ? "Entrando..." : "Entrar"}
+        </button>
+        <div className="login-hint">
+          Primeira execução: <strong>admin / admin123</strong> ou <strong>funcionario / func123</strong>
+        </div>
       </form>
     </div>
   );
 }
 
-function StartSession({ ppe, onStart, report, token }: { ppe: PPE[]; onStart: (mode: SessionMode, extra: string[]) => Promise<void>; report: Report | null; token: string }) {
+// ─────────────────────────── StartSession ───────────────────────────
+function StartSession({
+  ppe, onStart,
+}: { ppe: PPE[]; onStart: (mode: SessionMode, extra: string[]) => Promise<void> }) {
   const [mode, setMode] = useState<SessionMode>("individual");
   const [extra, setExtra] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   return (
     <div>
-      <h1>Nova sessão</h1>
-      <p className="muted">O preset automático vem da área/função do funcionário. Aqui você pode adicionar EPIs extras à sessão.</p>
+      <div className="section-header">
+        <h1>Nova sessão de monitoramento</h1>
+        <p className="muted">O preset de EPIs vem da sua área/função. Adicione itens extras se necessário.</p>
+      </div>
+      <div className="form-section-label">Modo de operação</div>
       <div className="mode-toggle">
-        <button className={mode === "individual" ? "active" : ""} onClick={() => setMode("individual")}>Individual</button>
-        <button className={mode === "group" ? "active" : ""} onClick={() => setMode("group")}>Grupo</button>
+        <button type="button" className={mode === "individual" ? "active" : ""} onClick={() => setMode("individual")}>
+          <IcUser size={15} /> Individual
+        </button>
+        <button type="button" className={mode === "group" ? "active" : ""} onClick={() => setMode("group")}>
+          <IcUser size={15} /> Grupo
+        </button>
       </div>
-      <div className="checks">
-        {ppe.map((item) => (
-          <label key={item.code}>
-            <input
-              type="checkbox"
-              checked={extra.includes(item.code)}
-              onChange={(event) => setExtra((current) => event.target.checked ? [...current, item.code] : current.filter((code) => code !== item.code))}
-            />
-            {item.name}
-          </label>
-        ))}
-      </div>
+      {ppe.length > 0 && (
+        <>
+          <div className="form-section-label">EPIs adicionais</div>
+          <div className="ppe-grid">
+            {ppe.map((item) => (
+              <label key={item.code} className={`ppe-item ${extra.includes(item.code) ? "checked" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={extra.includes(item.code)}
+                  onChange={(e) =>
+                    setExtra((cur) => e.target.checked ? [...cur, item.code] : cur.filter((c) => c !== item.code))
+                  }
+                />
+                <div className="ppe-check">{extra.includes(item.code) && <IcCheck size={10} />}</div>
+                {item.name}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
       <button
-        className="primary"
+        className="btn-primary"
         disabled={loading}
-        onClick={async () => {
-          setLoading(true);
-          await onStart(mode, extra);
-          setLoading(false);
-        }}
+        onClick={async () => { setLoading(true); await onStart(mode, extra); setLoading(false); }}
+        style={{ marginTop: ".5rem" }}
       >
-        Iniciar monitoramento
+        <IcPlay size={14} />
+        {loading ? "Iniciando..." : "Iniciar monitoramento"}
       </button>
-      {report && <ReportView report={report} token={token} />}
     </div>
   );
 }
 
-function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { token: string; session: Session; ppe: PPE[]; onEnd: () => Promise<void>; onReset: () => Promise<void>; onSessionUpdate: (s: Session) => void }) {
+// ─────────────────────────── Monitor ───────────────────────────
+function Monitor({
+  token, session, ppe, onEnd, onReset, onSessionUpdate,
+}: { token: string; session: Session; ppe: PPE[]; onEnd: () => Promise<void>; onReset: () => Promise<void>; onSessionUpdate: (s: Session) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const captureRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
@@ -347,25 +426,22 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
   const [latencies, setLatencies] = useState<number[]>([]);
   const [status, setStatus] = useState("Inicializando câmera...");
   const [ending, setEnding] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const intervalRef = useRef<number | undefined>(undefined);
   const streamRef = useRef<MediaStream | undefined>(undefined);
   const stoppingRef = useRef(false);
-  const ppeName = useMemo(() => Object.fromEntries(ppe.map((item) => [item.code, item.name])), [ppe]);
+  const ppeName = useMemo(() => Object.fromEntries(ppe.map((p) => [p.code, p.name])), [ppe]);
 
   function stopMonitoring(finalStatus = "Sessão encerrada") {
     stoppingRef.current = true;
     inFlight.current = false;
     if (intervalRef.current) window.clearInterval(intervalRef.current);
     intervalRef.current = undefined;
-    wsRef.current?.close();
-    wsRef.current = null;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    wsRef.current?.close(); wsRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = undefined;
     const video = videoRef.current;
-    if (video) {
-      video.pause();
-      video.srcObject = null;
-    }
+    if (video) { video.pause(); video.srcObject = null; }
     const canvas = overlayRef.current;
     canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     setStatus(finalStatus);
@@ -374,37 +450,27 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
   async function handleEndSession() {
     if (ending) return;
     setEnding(true);
+    setConfirmEnd(false);
     stopMonitoring("Encerrando sessão...");
-    try {
-      await onEnd();
-    } finally {
-      setEnding(false);
-    }
+    try { await onEnd(); } finally { setEnding(false); }
   }
 
   useEffect(() => {
-
     async function start() {
       stoppingRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
       const socket = new WebSocket(`${wsBase()}/api/ws/inference?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(session.id)}`);
       wsRef.current = socket;
       socket.onopen = () => setStatus("Monitorando em tempo real");
       socket.onerror = () => setStatus("Falha no WebSocket");
       socket.onclose = () => { if (!stoppingRef.current) setStatus("WebSocket desconectado"); };
-      socket.onmessage = (message) => {
+      socket.onmessage = (msg) => {
         if (stoppingRef.current) return;
         inFlight.current = false;
-        const parsed = JSON.parse(message.data);
-        if (parsed.error) {
-          setStatus(parsed.error);
-          return;
-        }
+        const parsed = JSON.parse(msg.data);
+        if (parsed.error) { setStatus(parsed.error); return; }
         const sent = frames.current.get(parsed.frame_id);
         const e2e = sent ? performance.now() - sent : parsed.server_total_ms;
         frames.current.delete(parsed.frame_id);
@@ -412,16 +478,15 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
         setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks`);
         setLatencies((items) => [...items.slice(-59), e2e]);
         drawOverlay(parsed);
-        if (!stoppingRef.current) api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
+        if (!stoppingRef.current)
+          api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
       };
-
       const interval = window.setInterval(() => {
         const video = videoRef.current;
         if (!video || socket.readyState !== WebSocket.OPEN || inFlight.current || video.videoWidth === 0) return;
         const capture = captureRef.current;
         const scale = 640 / video.videoWidth;
-        capture.width = 640;
-        capture.height = Math.round(video.videoHeight * scale);
+        capture.width = 640; capture.height = Math.round(video.videoHeight * scale);
         capture.getContext("2d")?.drawImage(video, 0, 0, capture.width, capture.height);
         const frameId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         frames.current.set(frameId, performance.now());
@@ -430,18 +495,13 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
       }, 250);
       intervalRef.current = interval;
     }
-
     function drawOverlay(next: FrameResult) {
-      const canvas = overlayRef.current;
-      const video = videoRef.current;
+      const canvas = overlayRef.current; const video = videoRef.current;
       if (!canvas || !video) return;
-      canvas.width = video.clientWidth;
-      canvas.height = video.clientHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      canvas.width = video.clientWidth; canvas.height = video.clientHeight;
+      const ctx = canvas.getContext("2d"); if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const sx = canvas.width / next.image_width;
-      const sy = canvas.height / next.image_height;
+      const sx = canvas.width / next.image_width; const sy = canvas.height / next.image_height;
       next.detections.forEach((det) => {
         const [x1, y1, x2, y2] = det.box;
         const isPerson = det.class_name === "Person";
@@ -454,66 +514,235 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
         ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
       });
     }
-
     start().catch((err) => setStatus(err instanceof Error ? err.message : "Falha ao iniciar câmera"));
-    return () => {
-      stopMonitoring("Sessão encerrada");
-    };
+    return () => { stopMonitoring("Sessão encerrada"); };
   }, [session.id, token]);
 
   const averageLatency = latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
+  const isLive = status.startsWith("Monitorando");
+
   return (
     <div>
+      {/* ── Header with controls always visible ── */}
       <div className="monitor-header">
-        <div>
+        <div className="monitor-title">
           <h1>Sessão {session.mode === "individual" ? "individual" : "em grupo"}</h1>
-          <p className="muted">{status}</p>
+          <div className="monitor-status">
+            <span className={`dot ${isLive ? "dot-blue" : "dot-amber"}`} />
+            {status}
+          </div>
         </div>
-        <div className={`lock ${session.machine_locked ? "danger" : ""}`}>{session.machine_locked ? "CORTE SIMULADO" : "Máquina liberada"}</div>
+        <div className="monitor-controls">
+          <div className={`machine-status ${session.machine_locked ? "danger" : "ok"}`}>
+            {session.machine_locked ? <IcLock size={13} /> : <IcUnlock size={13} />}
+            {session.machine_locked ? "CORTE SIMULADO" : "Máquina liberada"}
+          </div>
+          {session.machine_locked && (
+            <button className="btn-sm" onClick={onReset}>
+              <IcRefresh size={13} /> Resetar
+            </button>
+          )}
+          {!confirmEnd ? (
+            <button className="btn-danger btn-sm" onClick={() => setConfirmEnd(true)}>
+              <IcStop size={13} /> Encerrar sessão
+            </button>
+          ) : (
+            <div className="confirm-end">
+              <span>Encerrar sessão?</span>
+              <button className="btn-danger btn-sm" onClick={handleEndSession} disabled={ending}>
+                {ending ? "Encerrando..." : "Confirmar"}
+              </button>
+              <button className="btn-sm" onClick={() => setConfirmEnd(false)}>Cancelar</button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ── Video ── */}
       <div className="video-wrap">
         <video ref={videoRef} muted playsInline />
         <canvas ref={overlayRef} />
       </div>
+
+      {/* ── Metrics ── */}
       <div className="metrics">
-        <div><strong>{result?.inference_ms.toFixed(0) ?? 0} ms</strong><span>Inferência</span></div>
-        <div><strong>{averageLatency.toFixed(0)} ms</strong><span>E2E média</span></div>
-        <div><strong>{percentile(latencies, 0.5).toFixed(0)} ms</strong><span>p50</span></div>
-        <div><strong>{percentile(latencies, 0.95).toFixed(0)} ms</strong><span>p95</span></div>
+        <div className="metric-card">
+          <div className="metric-value">{result?.inference_ms.toFixed(0) ?? 0} ms</div>
+          <div className="metric-label">Inferência</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{averageLatency.toFixed(0)} ms</div>
+          <div className="metric-label">E2E média</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{percentile(latencies, 0.5).toFixed(0)} ms</div>
+          <div className="metric-label">p50</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{percentile(latencies, 0.95).toFixed(0)} ms</div>
+          <div className="metric-label">p95</div>
+        </div>
       </div>
+
+      {/* ── Track Cards ── */}
       <div className="track-grid">
         {(result?.tracks ?? []).map((track) => (
           <div key={track.track_id} className={`track-card ${track.compliant ? "ok" : "alert"}`}>
-            <strong>{track.track_id}</strong>
-            {session.required_ppe.map((code) => {
-              const item = track.ppe[code];
-              return <span key={code}>{ppeName[code] ?? code}: {item?.state ?? "unknown"} · nível {item?.severity ?? 0}</span>;
-            })}
+            <div className="track-card-header">
+              <span className="track-id">Track {track.track_id}</span>
+              <span className={`badge ${track.compliant ? "badge-green" : "badge-red"}`}>
+                <span className={`dot ${track.compliant ? "dot-green" : "dot-red"}`} />
+                {track.compliant ? "Conforme" : "Alerta"}
+              </span>
+            </div>
+            <div className="track-ppe-list">
+              {session.required_ppe.map((code) => {
+                const item = track.ppe[code];
+                const state = item?.state ?? "unknown";
+                return (
+                  <div key={code} className="track-ppe-item">
+                    <span className="track-ppe-name">{ppeName[code] ?? code}</span>
+                    <span className={`track-ppe-status ${state}`}>
+                      {state === "present" ? "✓" : state === "absent" ? "✗" : "?"} Nível {item?.severity ?? 0}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ))}
-      </div>
-      <div className="actions">
-        {session.machine_locked && <button onClick={onReset}>Reset manual</button>}
-        <button className="danger-btn" disabled={ending} onClick={handleEndSession}>{ending ? "Encerrando..." : "Encerrar sessão"}</button>
       </div>
     </div>
   );
 }
 
+// ─────────────────────────── HistoryView ───────────────────────────
+function HistoryView({ sessions, token }: { sessions: Session[]; token: string }) {
+  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  async function viewReport(sessionId: string) {
+    setLoadingId(sessionId);
+    setLoadError(null);
+    try {
+      const report = await api<Report>(`/api/reports/${sessionId}`, token);
+      setSelectedReport(report);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Erro ao carregar relatório");
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  if (selectedReport) {
+    return (
+      <div>
+        <div className="view-nav">
+          <button className="btn-back" onClick={() => setSelectedReport(null)}>
+            <IcBack size={14} /> Voltar ao histórico
+          </button>
+          <h2>Relatório da sessão</h2>
+        </div>
+        <ReportView report={selectedReport} token={token} />
+      </div>
+    );
+  }
+
+  const sorted = sessions.slice().reverse();
+
+  return (
+    <div>
+      <div className="section-header">
+        <h1>Histórico de sessões</h1>
+        <p className="muted">{sessions.length} {sessions.length === 1 ? "sessão registrada" : "sessões registradas"} neste sistema.</p>
+      </div>
+
+      {loadError && <div className="toast" style={{ marginBottom: "1rem" }}>{loadError}</div>}
+
+      {sessions.length === 0 ? (
+        <div className="empty-state" style={{ padding: "4rem 1rem" }}>
+          <div className="empty-icon-wrap"><IcHistory size={32} /></div>
+          <p>Nenhuma sessão registrada</p>
+          <p className="muted" style={{ fontSize: ".82rem", marginTop: ".25rem" }}>
+            Inicie uma sessão no painel de monitoramento.
+          </p>
+        </div>
+      ) : (
+        <div className="history-list">
+          {sorted.map((s) => {
+            const duration =
+              s.ended_at
+                ? (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
+                : null;
+            const trackCount = Object.keys(s.tracks ?? {}).length;
+            return (
+              <div key={s.id} className="history-row">
+                <div className="history-info">
+                  <div className="history-mode">
+                    {s.mode === "individual" ? "Sessão individual" : "Sessão em grupo"}
+                  </div>
+                  <div className="history-meta">
+                    <span className="history-meta-item">
+                      <IcCalendar size={12} />
+                      {new Date(s.started_at).toLocaleString("pt-BR")}
+                    </span>
+                    {duration !== null && (
+                      <span className="history-meta-item">
+                        <IcClock size={12} />
+                        {formatDuration(duration)}
+                      </span>
+                    )}
+                    {trackCount > 0 && (
+                      <span className="history-meta-item">
+                        <IcUser size={12} />
+                        {trackCount} {trackCount === 1 ? "pessoa" : "pessoas"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="history-row-right">
+                  <span className={`badge ${s.status === "active" ? "badge-green" : "badge-muted"}`}>
+                    {s.status === "active" && <span className="dot dot-green" />}
+                    {s.status === "active" ? "Ativa" : "Finalizada"}
+                  </span>
+                  {s.status === "finished" && (
+                    <button
+                      className="btn-ghost btn-sm"
+                      onClick={() => viewReport(s.id)}
+                      disabled={loadingId === s.id}
+                    >
+                      {loadingId === s.id ? "Carregando..." : "Ver relatório"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Charts ───────────────────────────
 function TrackComplianceChart({ report }: { report: Report }) {
-  const rows = report.track_summaries.slice(0, 6).map((track) => ({
-    label: track.track_id,
-    value: track.samples ? track.compliant_samples / track.samples * 100 : 0,
+  const rows = report.track_summaries.slice(0, 6).map((t) => ({
+    label: t.track_id,
+    value: t.samples ? (t.compliant_samples / t.samples) * 100 : 0,
   }));
   const data = rows.length ? rows : [{ label: "Sem tracks", value: 0 }];
   return (
     <div className="chart-card wide">
-      <div><strong>Conformidade por pessoa/track</strong><span>Percentual de amostras conformes</span></div>
+      <div className="chart-header">
+        <div className="chart-title">Conformidade por pessoa / track</div>
+        <div className="chart-subtitle">Percentual de amostras conformes</div>
+      </div>
       <div className="bar-list">
         {data.map((item) => (
           <div className="bar-row" key={item.label}>
             <span>{item.label}</span>
-            <div className="bar-track"><i style={{ width: `${Math.max(2, item.value)}%` }} /></div>
+            <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.max(2, item.value)}%` }} /></div>
             <b>{item.value.toFixed(1)}%</b>
           </div>
         ))}
@@ -523,22 +752,26 @@ function TrackComplianceChart({ report }: { report: Report }) {
 }
 
 function SeverityChart({ report }: { report: Report }) {
-  const data = [1, 2, 3].map((level) => ({ label: `Nível ${level}`, value: report.events_by_severity[String(level)] ?? 0 }));
-  const max = Math.max(1, ...data.map((item) => item.value));
+  const data = [1, 2, 3].map((l) => ({ label: `Nível ${l}`, value: report.events_by_severity[String(l)] ?? 0 }));
+  const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="chart-card">
-      <div><strong>Eventos por severidade</strong><span>Alertas, infrações e cortes</span></div>
+      <div className="chart-header">
+        <div className="chart-title">Eventos por severidade</div>
+        <div className="chart-subtitle">Alertas, infrações e cortes</div>
+      </div>
       <svg viewBox="0 0 320 180" role="img" aria-label="Eventos por severidade">
-        {data.map((item, index) => {
-          const height = item.value / max * 110;
-          const x = 44 + index * 92;
-          const y = 136 - height;
-          const color = ["#f59e0b", "#fb7185", "#ef4444"][index];
-          return <g key={item.label}>
-            <rect x={x} y={y} width="48" height={height || 2} rx="10" fill={color} />
-            <text x={x + 24} y={y - 8} textAnchor="middle" fill="#dce7f7" fontSize="16" fontWeight="800">{item.value}</text>
-            <text x={x + 24} y="160" textAnchor="middle" fill="#93a9c3" fontSize="12">{item.label}</text>
-          </g>;
+        {data.map((item, i) => {
+          const height = (item.value / max) * 110;
+          const x = 44 + i * 92; const y = 136 - height;
+          const color = ["#f59e0b", "#fb7185", "#ef4444"][i];
+          return (
+            <g key={item.label}>
+              <rect x={x} y={y} width="48" height={height || 2} rx="10" fill={color} />
+              <text x={x + 24} y={y - 8} textAnchor="middle" fill="#edf5ff" fontSize="16" fontWeight="800">{item.value}</text>
+              <text x={x + 24} y="160" textAnchor="middle" fill="#7aaecb" fontSize="12">{item.label}</text>
+            </g>
+          );
         })}
       </svg>
     </div>
@@ -548,19 +781,24 @@ function SeverityChart({ report }: { report: Report }) {
 function LatencyChart({ report }: { report: Report }) {
   const data = [
     { label: "Média", value: report.latency.average_ms ?? 0 },
-    { label: "p50", value: report.latency.p50_ms ?? 0 },
-    { label: "p95", value: report.latency.p95_ms ?? 0 },
+    { label: "p50",   value: report.latency.p50_ms ?? 0 },
+    { label: "p95",   value: report.latency.p95_ms ?? 0 },
   ];
-  const max = Math.max(1, ...data.map((item) => item.value));
+  const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="chart-card">
-      <div><strong>Latência fim a fim</strong><span>Resumo operacional em ms</span></div>
+      <div className="chart-header">
+        <div className="chart-title">Latência fim a fim</div>
+        <div className="chart-subtitle">Resumo operacional em ms</div>
+      </div>
       <div className="latency-bars">
         {data.map((item) => (
-          <div key={item.label}>
+          <div key={item.label} className="latency-row">
             <span>{item.label}</span>
             <strong>{item.value.toFixed(0)} ms</strong>
-            <i style={{ width: `${Math.max(4, item.value / max * 100)}%` }} />
+            <div className="latency-track">
+              <div className="latency-fill" style={{ width: `${Math.max(4, (item.value / max) * 100)}%` }} />
+            </div>
           </div>
         ))}
       </div>
@@ -571,51 +809,79 @@ function LatencyChart({ report }: { report: Report }) {
 function ComplianceDonut({ report }: { report: Report }) {
   const value = Math.max(0, Math.min(100, report.compliance_percent));
   const circumference = 2 * Math.PI * 42;
+  const color = value >= 80 ? "#10b981" : value >= 50 ? "#f59e0b" : "#ef4444";
   return (
     <div className="chart-card donut-card">
-      <div><strong>Conformidade geral</strong><span>Aderência da sessão</span></div>
+      <div className="chart-header">
+        <div className="chart-title">Conformidade geral</div>
+        <div className="chart-subtitle">Aderência da sessão</div>
+      </div>
       <svg viewBox="0 0 120 120" role="img" aria-label="Conformidade geral">
-        <circle cx="60" cy="60" r="42" fill="none" stroke="#19324d" strokeWidth="16" />
-        <circle cx="60" cy="60" r="42" fill="none" stroke="#22c55e" strokeWidth="16" strokeLinecap="round" transform="rotate(-90 60 60)" strokeDasharray={`${circumference}`} strokeDashoffset={`${circumference * (1 - value / 100)}`} />
-        <text x="60" y="58" textAnchor="middle" fill="#f8fbff" fontSize="20" fontWeight="900">{value.toFixed(1)}%</text>
-        <text x="60" y="76" textAnchor="middle" fill="#93a9c3" fontSize="10">conforme</text>
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#142030" strokeWidth="14" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke={color} strokeWidth="14"
+          strokeLinecap="round" transform="rotate(-90 60 60)"
+          strokeDasharray={`${circumference}`}
+          strokeDashoffset={`${circumference * (1 - value / 100)}`}
+        />
+        <text x="60" y="57" textAnchor="middle" fill="#edf5ff" fontSize="19" fontWeight="900">{value.toFixed(1)}%</text>
+        <text x="60" y="74" textAnchor="middle" fill="#7aaecb" fontSize="10">conforme</text>
       </svg>
     </div>
   );
 }
+
+// ─────────────────────────── ReportView ───────────────────────────
 function ReportView({ report, token }: { report: Report; token: string }) {
+  function downloadPdf() {
+    fetch(`${API_BASE}/api/reports/${report.session_id}/pdf`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url; link.download = `relatorio-${report.session_id}.pdf`;
+        link.click(); URL.revokeObjectURL(url);
+      });
+  }
   return (
     <div className="report">
-      <h2>Relatório final</h2>
-      <div className="metrics">
-        <div><strong>{report.duration_seconds.toFixed(1)} s</strong><span>Duração</span></div>
-        <div><strong>{report.compliance_percent.toFixed(1)}%</strong><span>Conformidade</span></div>
-        <div><strong>{report.infractions}</strong><span>Infrações</span></div>
-        <div><strong>{report.machine_cuts}</strong><span>Cortes</span></div>
+      <div className="report-summary-grid">
+        <div className="metric-card">
+          <div className="metric-value">{formatDuration(report.duration_seconds)}</div>
+          <div className="metric-label">Duração</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value" style={{ color: report.compliance_percent >= 80 ? "#34d399" : report.compliance_percent >= 50 ? "#fcd34d" : "#f87171" }}>
+            {report.compliance_percent.toFixed(1)}%
+          </div>
+          <div className="metric-label">Conformidade</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value" style={{ color: report.infractions > 0 ? "#fca5a5" : undefined }}>{report.infractions}</div>
+          <div className="metric-label">Infrações</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value" style={{ color: report.machine_cuts > 0 ? "#f87171" : undefined }}>{report.machine_cuts}</div>
+          <div className="metric-label">Cortes simulados</div>
+        </div>
       </div>
+
       <div className="report-charts">
         <ComplianceDonut report={report} />
         <SeverityChart report={report} />
         <LatencyChart report={report} />
         <TrackComplianceChart report={report} />
       </div>
-      <a className="download" href={`${API_BASE}/api/reports/${report.session_id}/pdf?token=${token}`} onClick={(event) => {
-        event.preventDefault();
-        fetch(`${API_BASE}/api/reports/${report.session_id}/pdf`, { headers: { Authorization: `Bearer ${token}` } })
-          .then((response) => response.blob())
-          .then((blob) => {
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `relatorio-${report.session_id}.pdf`;
-            link.click();
-            URL.revokeObjectURL(url);
-          });
-      }}>Baixar PDF</a>
+
+      <button className="download-btn" onClick={downloadPdf}>
+        <IcDownload size={14} /> Baixar relatório em PDF
+      </button>
     </div>
   );
 }
 
+// ─────────────────────────── AdminPanel ───────────────────────────
 function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
   const [dashboard, setDashboard] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
@@ -636,11 +902,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       api<JobRole[]>("/api/job-roles", token),
       api<Area[]>("/api/areas", token),
     ]);
-    setDashboard(dash);
-    setUsers(u);
-    setPresets(pr);
-    setJobs(jr);
-    setAreas(ar);
+    setDashboard(dash); setUsers(u); setPresets(pr); setJobs(jr); setAreas(ar);
   }
 
   useEffect(() => {
@@ -651,68 +913,92 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
 
   return (
     <div>
-      <h2>Dashboard admin</h2>
+      <div className="admin-section-title">Painel administrativo</div>
+
       {dashboard && (
         <div className="metrics">
-          <div><strong>{dashboard.users}</strong><span>Usuários</span></div>
-          <div><strong>{dashboard.active_sessions}</strong><span>Sessões ativas</span></div>
-          <div><strong>{dashboard.infractions}</strong><span>Infrações</span></div>
-          <div><strong>{dashboard.average_latency_ms}</strong><span>Latência média</span></div>
+          <div className="metric-card"><div className="metric-value">{dashboard.users}</div><div className="metric-label">Usuários</div></div>
+          <div className="metric-card"><div className="metric-value">{dashboard.active_sessions}</div><div className="metric-label">Sessões ativas</div></div>
+          <div className="metric-card"><div className="metric-value" style={{ color: dashboard.infractions > 0 ? "#fca5a5" : undefined }}>{dashboard.infractions}</div><div className="metric-label">Infrações</div></div>
+          <div className="metric-card"><div className="metric-value">{dashboard.average_latency_ms} ms</div><div className="metric-label">Latência média</div></div>
         </div>
       )}
+
       <div className="admin-grid">
-        <form onSubmit={async (event) => {
-          event.preventDefault();
-          await api("/api/users", token, { method: "POST", body: JSON.stringify({ name, username, password, role: "employee", job_role_id: jobs[0]?.id, area_id: areas[0]?.id }) });
-          setName(""); setUsername("");
-          await load();
+        <form className="admin-form" onSubmit={async (e) => {
+          e.preventDefault();
+          await api("/api/users", token, {
+            method: "POST",
+            body: JSON.stringify({ name, username, password, role: "employee", job_role_id: jobs[0]?.id, area_id: areas[0]?.id }),
+          });
+          setName(""); setUsername(""); await load();
         }}>
           <h3>Cadastrar funcionário</h3>
-          <input placeholder="Nome" value={name} onChange={(event) => setName(event.target.value)} />
-          <input placeholder="Login" value={username} onChange={(event) => setUsername(event.target.value)} />
-          <input placeholder="Senha" value={password} onChange={(event) => setPassword(event.target.value)} />
-          <button>Cadastrar</button>
+          <label>Nome completo</label>
+          <input placeholder="Ex: João da Silva" value={name} onChange={(e) => setName(e.target.value)} />
+          <label>Login</label>
+          <input placeholder="Ex: joao.silva" value={username} onChange={(e) => setUsername(e.target.value)} />
+          <label>Senha inicial</label>
+          <input placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button className="btn-primary" style={{ marginTop: ".25rem" }}>Cadastrar</button>
         </form>
-        <form onSubmit={async (event) => {
-          event.preventDefault();
+
+        <form className="admin-form" onSubmit={async (e) => {
+          e.preventDefault();
           await api("/api/presets", token, { method: "POST", body: JSON.stringify({ name: presetName, ppe_codes: presetPpe, active: true }) });
-          setPresetName(""); setPresetPpe([]);
-          await load();
+          setPresetName(""); setPresetPpe([]); await load();
         }}>
-          <h3>Novo preset</h3>
-          <input placeholder="Nome do preset" value={presetName} onChange={(event) => setPresetName(event.target.value)} />
-          <div className="checks compact">
+          <h3>Novo preset de EPIs</h3>
+          <label>Nome do preset</label>
+          <input placeholder="Ex: Solda, Construção..." value={presetName} onChange={(e) => setPresetName(e.target.value)} />
+          <label>EPIs incluídos</label>
+          <div className="admin-ppe-checks">
             {ppe.map((item) => (
               <label key={item.code}>
-                <input type="checkbox" checked={presetPpe.includes(item.code)} onChange={(event) => setPresetPpe((current) => event.target.checked ? [...current, item.code] : current.filter((code) => code !== item.code))} />
+                <input type="checkbox" checked={presetPpe.includes(item.code)}
+                  onChange={(e) => setPresetPpe((cur) => e.target.checked ? [...cur, item.code] : cur.filter((c) => c !== item.code))}
+                />
                 {item.name}
               </label>
             ))}
           </div>
-          <button>Salvar preset</button>
+          <button className="btn-primary" style={{ marginTop: ".25rem" }}>Salvar preset</button>
         </form>
       </div>
-      <h3>Funcionários</h3>
-      <div className="table">
-        {users.map((item) => <div key={item.id}><span>{item.name}</span><span>{item.username}</span><span>{item.active ? "Ativo" : "Inativo"}</span></div>)}
+
+      <div className="admin-sub-title">Funcionários cadastrados</div>
+      <div className="data-table">
+        <table>
+          <thead><tr><th>Nome</th><th>Login</th><th>Status</th></tr></thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id}>
+                <td>{u.name}</td>
+                <td style={{ color: "var(--tx-secondary)" }}>{u.username}</td>
+                <td><span className={`badge ${u.active ? "badge-green" : "badge-muted"}`}>{u.active ? "Ativo" : "Inativo"}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <h3>Presets</h3>
-      <div className="table">
-        {presets.map((item) => <div key={item.id}><span>{item.name}</span><span>{item.ppe_codes.join(", ")}</span><span>{item.active ? "Ativo" : "Inativo"}</span></div>)}
+
+      <div className="admin-sub-title" style={{ marginTop: "1.5rem" }}>Presets configurados</div>
+      <div className="data-table">
+        <table>
+          <thead><tr><th>Nome</th><th>EPIs</th><th>Status</th></tr></thead>
+          <tbody>
+            {presets.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td style={{ color: "var(--tx-secondary)" }}>{p.ppe_codes.join(", ")}</td>
+                <td><span className={`badge ${p.active ? "badge-blue" : "badge-muted"}`}>{p.active ? "Ativo" : "Inativo"}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
-
-
-
-
-
-
-
-
-
-
-

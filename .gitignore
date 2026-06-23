@@ -28,6 +28,7 @@ imagens_teste/
 *.exe
 *.pt
 !backend/models/best.pt
+!frontend/public/logo.jpg
 
 # Local settings
 .env
