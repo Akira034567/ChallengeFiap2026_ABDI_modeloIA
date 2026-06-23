@@ -346,14 +346,48 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
   const [result, setResult] = useState<FrameResult | null>(null);
   const [latencies, setLatencies] = useState<number[]>([]);
   const [status, setStatus] = useState("Inicializando câmera...");
+  const [ending, setEnding] = useState(false);
+  const intervalRef = useRef<number | undefined>(undefined);
+  const streamRef = useRef<MediaStream | undefined>(undefined);
+  const stoppingRef = useRef(false);
   const ppeName = useMemo(() => Object.fromEntries(ppe.map((item) => [item.code, item.name])), [ppe]);
 
+  function stopMonitoring(finalStatus = "Sessão encerrada") {
+    stoppingRef.current = true;
+    inFlight.current = false;
+    if (intervalRef.current) window.clearInterval(intervalRef.current);
+    intervalRef.current = undefined;
+    wsRef.current?.close();
+    wsRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = undefined;
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+    const canvas = overlayRef.current;
+    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    setStatus(finalStatus);
+  }
+
+  async function handleEndSession() {
+    if (ending) return;
+    setEnding(true);
+    stopMonitoring("Encerrando sessão...");
+    try {
+      await onEnd();
+    } finally {
+      setEnding(false);
+    }
+  }
+
   useEffect(() => {
-    let interval: number | undefined;
-    let stream: MediaStream | undefined;
 
     async function start() {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+      stoppingRef.current = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+      streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -362,8 +396,9 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
       wsRef.current = socket;
       socket.onopen = () => setStatus("Monitorando em tempo real");
       socket.onerror = () => setStatus("Falha no WebSocket");
-      socket.onclose = () => setStatus("WebSocket desconectado");
+      socket.onclose = () => { if (!stoppingRef.current) setStatus("WebSocket desconectado"); };
       socket.onmessage = (message) => {
+        if (stoppingRef.current) return;
         inFlight.current = false;
         const parsed = JSON.parse(message.data);
         if (parsed.error) {
@@ -377,10 +412,10 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
         setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks`);
         setLatencies((items) => [...items.slice(-59), e2e]);
         drawOverlay(parsed);
-        api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
+        if (!stoppingRef.current) api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
       };
 
-      interval = window.setInterval(() => {
+      const interval = window.setInterval(() => {
         const video = videoRef.current;
         if (!video || socket.readyState !== WebSocket.OPEN || inFlight.current || video.videoWidth === 0) return;
         const capture = captureRef.current;
@@ -393,6 +428,7 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
         inFlight.current = true;
         socket.send(JSON.stringify({ frame_id: frameId, captured_at_ms: Date.now(), image: capture.toDataURL("image/jpeg", 0.72) }));
       }, 250);
+      intervalRef.current = interval;
     }
 
     function drawOverlay(next: FrameResult) {
@@ -421,9 +457,7 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
 
     start().catch((err) => setStatus(err instanceof Error ? err.message : "Falha ao iniciar câmera"));
     return () => {
-      if (interval) window.clearInterval(interval);
-      wsRef.current?.close();
-      stream?.getTracks().forEach((track) => track.stop());
+      stopMonitoring("Sessão encerrada");
     };
   }, [session.id, token]);
 
@@ -460,21 +494,110 @@ function Monitor({ token, session, ppe, onEnd, onReset, onSessionUpdate }: { tok
       </div>
       <div className="actions">
         {session.machine_locked && <button onClick={onReset}>Reset manual</button>}
-        <button className="danger-btn" onClick={onEnd}>Encerrar sessão</button>
+        <button className="danger-btn" disabled={ending} onClick={handleEndSession}>{ending ? "Encerrando..." : "Encerrar sessão"}</button>
       </div>
     </div>
   );
 }
 
+function TrackComplianceChart({ report }: { report: Report }) {
+  const rows = report.track_summaries.slice(0, 6).map((track) => ({
+    label: track.track_id,
+    value: track.samples ? track.compliant_samples / track.samples * 100 : 0,
+  }));
+  const data = rows.length ? rows : [{ label: "Sem tracks", value: 0 }];
+  return (
+    <div className="chart-card wide">
+      <div><strong>Conformidade por pessoa/track</strong><span>Percentual de amostras conformes</span></div>
+      <div className="bar-list">
+        {data.map((item) => (
+          <div className="bar-row" key={item.label}>
+            <span>{item.label}</span>
+            <div className="bar-track"><i style={{ width: `${Math.max(2, item.value)}%` }} /></div>
+            <b>{item.value.toFixed(1)}%</b>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SeverityChart({ report }: { report: Report }) {
+  const data = [1, 2, 3].map((level) => ({ label: `Nível ${level}`, value: report.events_by_severity[String(level)] ?? 0 }));
+  const max = Math.max(1, ...data.map((item) => item.value));
+  return (
+    <div className="chart-card">
+      <div><strong>Eventos por severidade</strong><span>Alertas, infrações e cortes</span></div>
+      <svg viewBox="0 0 320 180" role="img" aria-label="Eventos por severidade">
+        {data.map((item, index) => {
+          const height = item.value / max * 110;
+          const x = 44 + index * 92;
+          const y = 136 - height;
+          const color = ["#f59e0b", "#fb7185", "#ef4444"][index];
+          return <g key={item.label}>
+            <rect x={x} y={y} width="48" height={height || 2} rx="10" fill={color} />
+            <text x={x + 24} y={y - 8} textAnchor="middle" fill="#dce7f7" fontSize="16" fontWeight="800">{item.value}</text>
+            <text x={x + 24} y="160" textAnchor="middle" fill="#93a9c3" fontSize="12">{item.label}</text>
+          </g>;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function LatencyChart({ report }: { report: Report }) {
+  const data = [
+    { label: "Média", value: report.latency.average_ms ?? 0 },
+    { label: "p50", value: report.latency.p50_ms ?? 0 },
+    { label: "p95", value: report.latency.p95_ms ?? 0 },
+  ];
+  const max = Math.max(1, ...data.map((item) => item.value));
+  return (
+    <div className="chart-card">
+      <div><strong>Latência fim a fim</strong><span>Resumo operacional em ms</span></div>
+      <div className="latency-bars">
+        {data.map((item) => (
+          <div key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value.toFixed(0)} ms</strong>
+            <i style={{ width: `${Math.max(4, item.value / max * 100)}%` }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComplianceDonut({ report }: { report: Report }) {
+  const value = Math.max(0, Math.min(100, report.compliance_percent));
+  const circumference = 2 * Math.PI * 42;
+  return (
+    <div className="chart-card donut-card">
+      <div><strong>Conformidade geral</strong><span>Aderência da sessão</span></div>
+      <svg viewBox="0 0 120 120" role="img" aria-label="Conformidade geral">
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#19324d" strokeWidth="16" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#22c55e" strokeWidth="16" strokeLinecap="round" transform="rotate(-90 60 60)" strokeDasharray={`${circumference}`} strokeDashoffset={`${circumference * (1 - value / 100)}`} />
+        <text x="60" y="58" textAnchor="middle" fill="#f8fbff" fontSize="20" fontWeight="900">{value.toFixed(1)}%</text>
+        <text x="60" y="76" textAnchor="middle" fill="#93a9c3" fontSize="10">conforme</text>
+      </svg>
+    </div>
+  );
+}
 function ReportView({ report, token }: { report: Report; token: string }) {
   return (
     <div className="report">
       <h2>Relatório final</h2>
       <div className="metrics">
-        <div><strong>{report.duration_seconds.toFixed(0)} s</strong><span>Duração</span></div>
+        <div><strong>{report.duration_seconds.toFixed(1)} s</strong><span>Duração</span></div>
         <div><strong>{report.compliance_percent.toFixed(1)}%</strong><span>Conformidade</span></div>
         <div><strong>{report.infractions}</strong><span>Infrações</span></div>
         <div><strong>{report.machine_cuts}</strong><span>Cortes</span></div>
+      </div>
+      <div className="report-charts">
+        <ComplianceDonut report={report} />
+        <SeverityChart report={report} />
+        <LatencyChart report={report} />
+        <TrackComplianceChart report={report} />
       </div>
       <a className="download" href={`${API_BASE}/api/reports/${report.session_id}/pdf?token=${token}`} onClick={(event) => {
         event.preventDefault();
@@ -582,6 +705,9 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+
+
 
 
 

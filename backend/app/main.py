@@ -270,6 +270,8 @@ def reset_machine(session_id: str, user: Annotated[User, Depends(current_user)])
 @app.get("/api/reports/{session_id}", response_model=QualityReport)
 def get_report(session_id: str, user: Annotated[User, Depends(current_user)]) -> QualityReport:
     session = get_session(session_id, user)
+    if session.status == SessionStatus.finished:
+        return reports.generate(session)
     existing = next((item for item in store.list("reports", QualityReport) if item.session_id == session.id), None)
     return existing or reports.generate(session)
 
@@ -364,5 +366,6 @@ async def inference_ws(
 
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+
 
 

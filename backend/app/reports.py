@@ -1,8 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from io import BytesIO
 from statistics import mean
 
+from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -26,6 +29,10 @@ def percentile(values: list[float], percentile_value: float) -> float:
     return round(ordered[index], 2)
 
 
+def chart_label(value: float) -> str:
+    return f"{value:.1f}" if value % 1 else str(int(value))
+
+
 class ReportService:
     def __init__(self, store: JsonStore):
         self.store = store
@@ -40,7 +47,10 @@ class ReportService:
         compliant = sum(track.compliant_samples for track in session.tracks.values())
         latencies = [item.server_total_ms for item in session.latency_metrics]
         end = session.ended_at or session.started_at
+        existing = next((item for item in self.store.list("reports", QualityReport) if item.session_id == session.id), None)
+        report_data = {"id": existing.id} if existing else {}
         report = QualityReport(
+            **report_data,
             session_id=session.id,
             duration_seconds=max(0, (end - session.started_at).total_seconds()),
             required_ppe=session.required_ppe,
@@ -57,7 +67,7 @@ class ReportService:
             },
             track_summaries=list(session.tracks.values()),
         )
-        self.store.upsert("reports", report)
+        self.store.upsert("reports", report, id_field="session_id")
         return report
 
     def pdf(self, report: QualityReport) -> bytes:
@@ -88,7 +98,16 @@ class ReportService:
                 ]
             )
         )
-        story.extend([table, Spacer(1, 18), Paragraph("Pessoas monitoradas", styles["Heading2"])])
+        story.extend([table, Spacer(1, 18), Paragraph("Indicadores visuais", styles["Heading2"])])
+        story.extend([
+            self._compliance_pie(report),
+            Spacer(1, 12),
+            self._severity_chart(report),
+            Spacer(1, 12),
+            self._track_chart(report),
+            Spacer(1, 18),
+            Paragraph("Pessoas monitoradas", styles["Heading2"]),
+        ])
         rows = [["Track", "Amostras", "Conformes", "Percentual"]]
         for track in report.track_summaries:
             percent = track.compliant_samples / track.samples * 100 if track.samples else 0
@@ -107,4 +126,63 @@ class ReportService:
         story.append(track_table)
         doc.build(story)
         return buffer.getvalue()
+
+    def _compliance_pie(self, report: QualityReport) -> Drawing:
+        drawing = Drawing(460, 150)
+        drawing.add(String(0, 132, "Conformidade geral da sessão", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        compliant = max(0, min(100, report.compliance_percent))
+        pie = Pie()
+        pie.x = 8
+        pie.y = 18
+        pie.width = 110
+        pie.height = 110
+        pie.data = [compliant, max(0, 100 - compliant)]
+        pie.labels = [f"Conforme {compliant:.1f}%", f"Não conforme {100 - compliant:.1f}%"]
+        pie.slices[0].fillColor = colors.HexColor("#22C55E")
+        pie.slices[1].fillColor = colors.HexColor("#EF4444")
+        drawing.add(pie)
+        drawing.add(String(160, 86, f"Aderência: {compliant:.1f}%", fontSize=18, fillColor=colors.HexColor("#0F172A")))
+        drawing.add(String(160, 62, f"Duração analisada: {report.duration_seconds:.1f} s", fontSize=10, fillColor=colors.HexColor("#475569")))
+        drawing.add(String(160, 44, f"EPIs exigidos: {', '.join(report.required_ppe)}", fontSize=10, fillColor=colors.HexColor("#475569")))
+        return drawing
+
+    def _severity_chart(self, report: QualityReport) -> Drawing:
+        drawing = Drawing(460, 180)
+        drawing.add(String(0, 162, "Eventos por severidade", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        values = [report.events_by_severity.get(str(level), 0) for level in (1, 2, 3)]
+        chart = VerticalBarChart()
+        chart.x = 38
+        chart.y = 28
+        chart.height = 110
+        chart.width = 360
+        chart.data = [values]
+        chart.categoryAxis.categoryNames = ["Nível 1", "Nível 2", "Nível 3"]
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.valueMax = max(3, max(values) + 1)
+        chart.valueAxis.valueStep = 1
+        chart.bars[0].fillColor = colors.HexColor("#F59E0B")
+        drawing.add(chart)
+        return drawing
+
+    def _track_chart(self, report: QualityReport) -> Drawing:
+        drawing = Drawing(460, 190)
+        drawing.add(String(0, 172, "Conformidade por pessoa/track", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        labels = [track.track_id for track in report.track_summaries[:6]] or ["Sem tracks"]
+        values = [
+            round(track.compliant_samples / track.samples * 100, 1) if track.samples else 0
+            for track in report.track_summaries[:6]
+        ] or [0]
+        chart = HorizontalBarChart()
+        chart.x = 86
+        chart.y = 28
+        chart.height = 120
+        chart.width = 310
+        chart.data = [values]
+        chart.categoryAxis.categoryNames = labels
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.valueMax = 100
+        chart.valueAxis.valueStep = 20
+        chart.bars[0].fillColor = colors.HexColor("#38BDF8")
+        drawing.add(chart)
+        return drawing
 

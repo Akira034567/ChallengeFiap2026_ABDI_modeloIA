@@ -127,6 +127,50 @@ input {
 }
 .report { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #203a56; }
 .download { color: #67e8f9; font-weight: 800; }
+.report-charts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .85rem;
+  margin: 1rem 0 1.25rem;
+}
+.chart-card {
+  min-height: 220px;
+  border: 1px solid #203a56;
+  border-radius: 18px;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(16, 36, 58, .98), rgba(9, 22, 38, .98));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.chart-card > div:first-child { display: grid; gap: .25rem; margin-bottom: .75rem; }
+.chart-card > div:first-child strong { color: #f8fbff; }
+.chart-card > div:first-child span { color: #93a9c3; font-size: .85rem; }
+.chart-card svg { width: 100%; height: auto; display: block; }
+.chart-card.wide { grid-column: 1 / -1; min-height: auto; }
+.donut-card { display: grid; grid-template-rows: auto 1fr; }
+.donut-card svg { max-height: 165px; }
+.bar-list, .latency-bars { display: grid; gap: .75rem; }
+.bar-row {
+  display: grid;
+  grid-template-columns: 92px minmax(80px, 1fr) 68px;
+  align-items: center;
+  gap: .75rem;
+}
+.bar-row span, .latency-bars span { color: #c9d8ea; font-size: .9rem; }
+.bar-row b { text-align: right; color: #f8fbff; }
+.bar-track, .latency-bars i {
+  height: 12px;
+  border-radius: 999px;
+  background: #19324d;
+  overflow: hidden;
+}
+.bar-track i, .latency-bars i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #22c55e);
+}
+.latency-bars div { display: grid; grid-template-columns: 72px 86px 1fr; gap: .7rem; align-items: center; }
+.latency-bars strong { color: #f8fbff; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
 .admin-grid form { display: grid; gap: .7rem; padding: 1rem; border-radius: 16px; background: #10243a; }
 .table { display: grid; gap: .4rem; }
@@ -140,7 +184,9 @@ input {
 @media (max-width: 980px) {
   .grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-charts { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: start; }
 }
+
 
 
