@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -97,11 +100,30 @@ class JsonStore:
         return repaired
 
     def _write(self) -> None:
-        temp = self.path.with_suffix(".tmp")
-        with temp.open("w", encoding="utf-8") as handle:
-            json.dump(self.data, handle, ensure_ascii=False, indent=2, default=str)
-            handle.flush()
-        temp.replace(self.path)
+        temp = self.path.with_name(f"{self.path.stem}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temp.open("w", encoding="utf-8") as handle:
+                json.dump(self.data, handle, ensure_ascii=False, indent=2, default=str)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            last_error: PermissionError | None = None
+            for attempt in range(12):
+                try:
+                    os.replace(temp, self.path)
+                    return
+                except PermissionError as exc:
+                    last_error = exc
+                    time.sleep(0.05 * (attempt + 1))
+            if last_error:
+                raise last_error
+        finally:
+            if temp.exists():
+                try:
+                    temp.unlink()
+                except PermissionError:
+                    pass
 
     def _seed(self) -> None:
         changed = False
