@@ -1,0 +1,13 @@
+{
+  "name": "challenge-fiap-2026-abdi-epi-guard",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "install:frontend": "npm --prefix frontend install",
+    "build": "npm --prefix frontend run build",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "test": "python -m pytest backend/tests",
+    "start:backend": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir backend"
+  }
+}
+
