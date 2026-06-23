@@ -1,0 +1,1 @@
+# ChallengeFiap2026_ABDI_modeloIA
