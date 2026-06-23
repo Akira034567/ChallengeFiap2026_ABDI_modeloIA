@@ -2,26 +2,51 @@
 
 Aplicação local FastAPI + React para monitorar capacete, luvas e óculos com um modelo YOLO carregado uma única vez no PC servidor.
 
-## Como rodar em desenvolvimento
+O navegador captura a câmera, envia amostras ao backend por WebSocket e recebe as detecções em tempo real. Frames, vídeos e recortes não são salvos em disco.
 
-1. Backend:
+## Pré-requisitos
+
+- Git
+- Python 3.11
+- Node.js LTS
+- Webcam
+- Windows PowerShell
+
+## Como rodar após clonar o repositório
+
+```powershell
+git clone URL_DO_REPOSITORIO
+cd ChallengeFiap2026_ABDI_modeloIA
+```
+
+Em um terminal, inicie o backend:
 
 ```powershell
 .\run_backend.ps1
 ```
 
-2. Frontend, em outro terminal:
+Em outro terminal, inicie o frontend:
 
 ```powershell
 .\run_frontend.ps1
 ```
 
-3. Abra `http://localhost:5173`.
+Depois abra:
+
+```text
+http://localhost:5173
+```
 
 Usuários iniciais:
 
 - Admin: `admin` / `admin123`
 - Funcionário: `funcionario` / `func123`
+
+Se o PowerShell bloquear os scripts, execute uma vez:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
 
 ## Como gerar uma versão servida pelo FastAPI
 
@@ -31,14 +56,19 @@ npm --prefix frontend run build
 .\run_backend.ps1
 ```
 
-Depois abra `http://localhost:8000`.
+Depois abra:
+
+```text
+http://localhost:8000
+```
 
 ## Modelo e dados
 
-- O único peso versionável é `backend/models/best.pt`.
+- O peso final do modelo fica em `backend/models/best.pt`.
 - Dataset, resultados de treino, imagens, vídeos, checkpoints antigos e instaladores são ignorados pelo Git.
 - Frames de câmera não são salvos em disco; são processados em memória via WebSocket.
 - Dados operacionais ficam em `backend/data/store.json`, com escrita atômica.
+- Cada computador cria seu próprio `store.json` local.
 
 ## Política padrão
 
@@ -50,7 +80,10 @@ Depois abra `http://localhost:8000`.
 - Nível 3: 10 s, simula corte.
 - Liberação após corte: somente reset manual e conformidade recuperada.
 
+## Uso em outros aparelhos
+
+Em `localhost`, a câmera funciona normalmente. Para acessar de outro dispositivo na rede, como um celular, pode ser necessário configurar HTTPS, porque navegadores costumam bloquear `getUserMedia` fora de contextos seguros.
+
 ## Integração futura com ESP32
 
 A interface está isolada em `MachineSafetyPort`. Hoje `SimulationAdapter` registra o corte; a futura `ESP32Adapter` pode internalizar o protocolo Wi-Fi sem alterar o restante do sistema.
-
