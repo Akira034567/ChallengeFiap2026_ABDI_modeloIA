@@ -228,4 +228,3 @@ class MonitoringEngine:
             for track in session.tracks.values()
             for compliance in track.ppe.values()
         )
-

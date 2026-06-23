@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
@@ -45,6 +45,7 @@ class User(BaseModel):
     role: UserRole = UserRole.employee
     job_role_id: str | None = None
     area_id: str | None = None
+    preset_id: str | None = None
     active: bool = True
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -56,6 +57,7 @@ class UserPublic(BaseModel):
     role: UserRole
     job_role_id: str | None = None
     area_id: str | None = None
+    preset_id: str | None = None
     active: bool
     created_at: datetime
 
@@ -67,6 +69,7 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.employee
     job_role_id: str | None = None
     area_id: str | None = None
+    preset_id: str | None = None
     active: bool = True
 
 
@@ -76,6 +79,7 @@ class UserUpdate(BaseModel):
     role: UserRole | None = None
     job_role_id: str | None = None
     area_id: str | None = None
+    preset_id: str | None = None
     active: bool | None = None
 
 
@@ -244,4 +248,5 @@ class FrameResult(BaseModel):
     processing_ms: float
     server_total_ms: float
     server_sent_at_ms: float
+
 

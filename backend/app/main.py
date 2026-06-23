@@ -68,7 +68,12 @@ def startup() -> None:
 
 
 def public_user(user: User) -> UserPublic:
-    return UserPublic.model_validate(user.model_dump(exclude={"password_hash"}))
+    data = user.model_dump(exclude={"password_hash"})
+    if not data.get("preset_id"):
+        preset = auto_preset_for_user(user)
+        if preset:
+            data["preset_id"] = preset.id
+    return UserPublic.model_validate(data)
 
 
 def current_user(
@@ -90,6 +95,10 @@ def require_admin(user: Annotated[User, Depends(current_user)]) -> User:
 
 
 def auto_preset_for_user(user: User) -> Preset | None:
+    if user.preset_id:
+        preset = store.get("presets", user.preset_id, Preset)
+        if preset and preset.active:
+            return preset
     if user.area_id:
         area = store.get("areas", user.area_id, Area)
         if area and area.preset_id:
@@ -182,6 +191,7 @@ def create_user(payload: UserCreate, _: Annotated[User, Depends(require_admin)])
         role=payload.role,
         job_role_id=payload.job_role_id,
         area_id=payload.area_id,
+        preset_id=payload.preset_id,
         active=payload.active,
     )
     store.upsert("users", user)
@@ -219,7 +229,8 @@ def create_session(
     user: Annotated[User, Depends(current_user)],
 ) -> MonitoringSession:
     preset = auto_preset_for_user(user)
-    ppe_codes = list(dict.fromkeys([*(preset.ppe_codes if preset else []), *payload.additional_ppe]))
+    additional_ppe = payload.additional_ppe if user.role == UserRole.admin else []
+    ppe_codes = list(dict.fromkeys([*(preset.ppe_codes if preset else []), *additional_ppe]))
     if not ppe_codes:
         ppe_codes = [item.code for item in store.list("ppe", PPE)]
     session = MonitoringSession(
@@ -324,6 +335,11 @@ async def inference_ws(
     try:
         while True:
             payload = await websocket.receive_json()
+            latest_session = store.get("sessions", session_id, MonitoringSession)
+            if not latest_session or latest_session.status != SessionStatus.active:
+                await websocket.close(code=4401)
+                return
+            session = latest_session
             received_at_ms = time.time() * 1000
             processing_started = time.perf_counter()
             frame_id = str(payload["frame_id"])
@@ -366,6 +382,7 @@ async def inference_ws(
 
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+
 
 
 

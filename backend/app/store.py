@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import threading
@@ -32,7 +32,10 @@ class JsonStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self.data = self._load()
+        repaired = self._repair_mojibake(self.data)
         self._seed()
+        if repaired:
+            self._write()
 
     def _empty(self) -> dict[str, list[dict[str, Any]]]:
         return {name: [] for name in self.collections}
@@ -40,11 +43,58 @@ class JsonStore:
     def _load(self) -> dict[str, list[dict[str, Any]]]:
         if not self.path.exists():
             return self._empty()
-        with self.path.open("r", encoding="utf-8") as handle:
+        with self.path.open("r", encoding="utf-8-sig") as handle:
             loaded = json.load(handle)
         for name in self.collections:
             loaded.setdefault(name, [])
         return loaded
+
+    def _repair_mojibake(self, value: Any) -> bool:
+        changed, repaired = self._repair_value(value)
+        if changed and isinstance(repaired, dict):
+            value.clear()
+            value.update(repaired)
+        return changed
+
+    def _repair_value(self, value: Any) -> tuple[bool, Any]:
+        if isinstance(value, str):
+            repaired = self._repair_text(value)
+            return repaired != value, repaired
+        if isinstance(value, list):
+            changed = False
+            items = []
+            for item in value:
+                item_changed, repaired_item = self._repair_value(item)
+                changed = changed or item_changed
+                items.append(repaired_item)
+            return changed, items
+        if isinstance(value, dict):
+            changed = False
+            items = {}
+            for key, item in value.items():
+                item_changed, repaired_item = self._repair_value(item)
+                changed = changed or item_changed
+                items[key] = repaired_item
+            return changed, items
+        return False, value
+
+    def _repair_text(self, value: str) -> str:
+        markers = ("\u00c3", "\u00c2", "\ufffd", "\u00e2\u20ac", "\u00e2\u20ac\u0153", "\u00e2\u20ac\u009d", "\u00e2\u20ac\u00a2", "\u00e2\u20ac\u201d", "\u00e2\u20ac\u201c", "\u00e2\u201e\u00a2", "\u00e2\u0153", "\u00e2\u201d")
+        repaired = value
+        for _ in range(3):
+            if not any(marker in repaired for marker in markers):
+                break
+            try:
+                candidate = repaired.encode("cp1252").decode("utf-8")
+            except UnicodeError:
+                try:
+                    candidate = repaired.encode("latin-1").decode("utf-8")
+                except UnicodeError:
+                    break
+            if candidate == repaired:
+                break
+            repaired = candidate
+        return repaired
 
     def _write(self) -> None:
         temp = self.path.with_suffix(".tmp")
@@ -59,14 +109,14 @@ class JsonStore:
             self.data["ppe"] = [
                 PPE(code="helmet", name="Capacete", positive_class="Helmet", negative_class="No-Helmet").model_dump(mode="json"),
                 PPE(code="gloves", name="Luvas", positive_class="Gloves", negative_class="No-Gloves").model_dump(mode="json"),
-                PPE(code="goggles", name="Óculos", positive_class="Goggles", negative_class="No-Goggles").model_dump(mode="json"),
+                PPE(code="goggles", name="\u00d3culos", positive_class="Goggles", negative_class="No-Goggles").model_dump(mode="json"),
             ]
             changed = True
         if not self.data["presets"]:
-            preset = Preset(id="pre_default", name="Proteção completa", ppe_codes=["helmet", "gloves", "goggles"])
+            preset = Preset(id="pre_default", name="Prote\u00e7\u00e3o completa", ppe_codes=["helmet", "gloves", "goggles"])
             self.data["presets"].append(preset.model_dump(mode="json"))
             self.data["job_roles"].append(JobRole(id="job_operator", name="Operador", preset_id=preset.id).model_dump(mode="json"))
-            self.data["areas"].append(Area(id="area_factory", name="Área industrial", preset_id=preset.id).model_dump(mode="json"))
+            self.data["areas"].append(Area(id="area_factory", name="\u00c1rea industrial", preset_id=preset.id).model_dump(mode="json"))
             changed = True
         if not self.data["users"]:
             self.data["users"] = [
@@ -79,7 +129,7 @@ class JsonStore:
                 ).model_dump(mode="json"),
                 User(
                     id="usr_employee",
-                    name="Funcionário Demo",
+                    name="Funcion\u00e1rio Demo",
                     username="funcionario",
                     password_hash=hash_password("func123"),
                     role=UserRole.employee,
@@ -88,6 +138,14 @@ class JsonStore:
                 ).model_dump(mode="json"),
             ]
             changed = True
+        area_presets = {area["id"]: area.get("preset_id") for area in self.data["areas"]}
+        job_presets = {job["id"]: job.get("preset_id") for job in self.data["job_roles"]}
+        for user in self.data["users"]:
+            if user.get("role") == UserRole.employee.value and not user.get("preset_id"):
+                preset_id = area_presets.get(user.get("area_id")) or job_presets.get(user.get("job_role_id"))
+                if preset_id:
+                    user["preset_id"] = preset_id
+                    changed = True
         if changed:
             self._write()
 
@@ -120,5 +178,6 @@ class JsonStore:
             if changed:
                 self._write()
             return changed
+
 
 

@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-// ─────────────────────────── Types ───────────────────────────
+// Types
 type Role = "employee" | "admin";
 type SessionMode = "individual" | "group";
 type SessionStatus = "active" | "finished";
 type AppView = "monitor" | "history" | "admin";
 
-type User = { id: string; name: string; username: string; role: Role; job_role_id?: string | null; area_id?: string | null; active: boolean };
+type User = { id: string; name: string; username: string; role: Role; job_role_id?: string | null; area_id?: string | null; preset_id?: string | null; active: boolean };
 type PPE = { code: string; name: string; positive_class: string; negative_class: string };
 type Preset = { id: string; name: string; ppe_codes: string[]; active: boolean };
 type JobRole = { id: string; name: string; preset_id?: string | null };
@@ -44,7 +44,7 @@ type Report = {
   track_summaries: TrackSummary[];
 };
 
-// ─────────────────────────── Icons ───────────────────────────
+// Icons
 type IP = { size?: number };
 const sv = (size: number, children: React.ReactNode) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -66,7 +66,7 @@ const IcCalendar = ({ size = 13 }: IP) => sv(size, <><rect x="3" y="4" width="18
 const IcShield   = ({ size = 16 }: IP) => sv(size, <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>);
 const IcUser     = ({ size = 15 }: IP) => sv(size, <><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>);
 
-// ─────────────────────────── API ───────────────────────────
+// API
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 function wsBase() {
@@ -101,28 +101,44 @@ function formatDuration(seconds: number) {
   return `${m}min ${s}s`;
 }
 
-// ─────────────────────────── App ───────────────────────────
+function ppeNameMap(ppe: PPE[]) {
+  return Object.fromEntries(ppe.map((item) => [item.code, item.name]));
+}
+
+function formatPpeNames(codes: string[], ppe: PPE[]) {
+  const names = ppeNameMap(ppe);
+  return codes.map((code) => names[code] ?? code).join(", ");
+}
+
+function presetForUser(user: User, presets: Preset[]) {
+  return presets.find((preset) => preset.id === user.preset_id) ?? null;
+}
+// App
 function App() {
   const [token, setToken] = useState(localStorage.getItem("token") ?? "");
   const [user, setUser] = useState<User | null>(null);
   const [ppe, setPpe] = useState<PPE[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [presets, setPresets] = useState<Preset[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
   const [view, setView] = useState<AppView>("monitor");
+  const ignoredSessionIds = useRef(new Set<string>());
 
   async function bootstrap(nextToken = token) {
     if (!nextToken) return;
-    const [me, ppeList, sessionList] = await Promise.all([
+    const [me, ppeList, sessionList, presetList] = await Promise.all([
       api<User>("/api/auth/me", nextToken),
       api<PPE[]>("/api/ppe", nextToken),
       api<Session[]>("/api/sessions", nextToken),
+      api<Preset[]>("/api/presets", nextToken),
     ]);
     setUser(me);
     setPpe(ppeList);
     setSessions(sessionList);
-    setActiveSession(sessionList.find((s) => s.status === "active") ?? null);
+    setPresets(presetList);
+    setActiveSession(sessionList.find((s) => s.status === "active" && !ignoredSessionIds.current.has(s.id)) ?? null);
   }
 
   useEffect(() => {
@@ -157,14 +173,22 @@ function App() {
 
   async function endSession() {
     if (!activeSession) return;
-    const generated = await api<Report>(`/api/sessions/${activeSession.id}/end`, token, {
-      method: "POST", body: JSON.stringify({ reason: "Encerrada pelo operador" }),
-    });
-    setReport(generated);
+    const sessionToEnd = activeSession;
+    const sessionId = sessionToEnd.id;
+    ignoredSessionIds.current.add(sessionId);
     setActiveSession(null);
-    await bootstrap();
+    try {
+      const generated = await api<Report>(`/api/sessions/${sessionId}/end`, token, {
+        method: "POST", body: JSON.stringify({ reason: "Encerrada pelo operador" }),
+      });
+      setReport(generated);
+      await bootstrap();
+    } catch (err) {
+      ignoredSessionIds.current.delete(sessionId);
+      setActiveSession(sessionToEnd);
+      throw err;
+    }
   }
-
   async function resetMachine() {
     if (!activeSession) return;
     await api(`/api/sessions/${activeSession.id}/reset-machine`, token, { method: "POST", body: "{}" });
@@ -182,7 +206,10 @@ function App() {
         <div className="card">
           <Monitor
             token={token} session={activeSession} ppe={ppe}
-            onEnd={endSession} onReset={resetMachine} onSessionUpdate={setActiveSession}
+            onEnd={endSession} onReset={resetMachine} onSessionUpdate={(updated) => {
+              if (ignoredSessionIds.current.has(updated.id) || updated.status !== "active") return;
+              setActiveSession(updated);
+            }}
           />
         </div>
       );
@@ -203,7 +230,7 @@ function App() {
     return (
       <div className="start-grid">
         <div className="card">
-          <StartSession ppe={ppe} onStart={createSession} />
+          <StartSession user={user!} ppe={ppe} presets={presets} onStart={createSession} />
         </div>
         <aside className="card side-card">
           <h2>Sessões recentes</h2>
@@ -311,7 +338,7 @@ function App() {
   );
 }
 
-// ─────────────────────────── Login ───────────────────────────
+// Login
 function Login({
   onLogin, error, setError,
 }: { onLogin: (u: string, p: string) => Promise<void>; error: string; setError: (e: string) => void }) {
@@ -357,19 +384,28 @@ function Login({
   );
 }
 
-// ─────────────────────────── StartSession ───────────────────────────
+// StartSession
 function StartSession({
-  ppe, onStart,
-}: { ppe: PPE[]; onStart: (mode: SessionMode, extra: string[]) => Promise<void> }) {
+  user, ppe, presets, onStart,
+}: { user: User; ppe: PPE[]; presets: Preset[]; onStart: (mode: SessionMode, extra: string[]) => Promise<void> }) {
   const [mode, setMode] = useState<SessionMode>("individual");
   const [extra, setExtra] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const linkedPreset = presetForUser(user, presets);
+  const employeePpe = linkedPreset?.ppe_codes ?? [];
+  const canChoosePpe = user.role === "admin";
+
   return (
     <div>
       <div className="section-header">
         <h1>Nova sessão de monitoramento</h1>
-        <p className="muted">O preset de EPIs vem da sua área/função. Adicione itens extras se necessário.</p>
+        {canChoosePpe ? (
+          <p className="muted">Como administrador, você pode iniciar uma leitura manual e escolher EPIs adicionais.</p>
+        ) : (
+          <p className="muted">Os EPIs desta leitura são definidos pelo preset vinculado pelo administrador.</p>
+        )}
       </div>
+
       <div className="form-section-label">Modo de operação</div>
       <div className="mode-toggle">
         <button type="button" className={mode === "individual" ? "active" : ""} onClick={() => setMode("individual")}>
@@ -379,9 +415,20 @@ function StartSession({
           <IcUser size={15} /> Grupo
         </button>
       </div>
-      {ppe.length > 0 && (
+
+      {!canChoosePpe && (
+        <div className="linked-preset-card">
+          <div className="linked-preset-label">Preset vinculado</div>
+          <div className="linked-preset-name">{linkedPreset?.name ?? "Nenhum preset específico"}</div>
+          <div className="linked-preset-ppe">
+            {employeePpe.length ? formatPpeNames(employeePpe, ppe) : "Sem preset vinculado; o sistema usará todos os EPIs cadastrados."}
+          </div>
+        </div>
+      )}
+
+      {canChoosePpe && ppe.length > 0 && (
         <>
-          <div className="form-section-label">EPIs adicionais</div>
+          <div className="form-section-label">EPIs adicionais/manuais</div>
           <div className="ppe-grid">
             {ppe.map((item) => (
               <label key={item.code} className={`ppe-item ${extra.includes(item.code) ? "checked" : ""}`}>
@@ -399,10 +446,11 @@ function StartSession({
           </div>
         </>
       )}
+
       <button
         className="btn-primary"
         disabled={loading}
-        onClick={async () => { setLoading(true); await onStart(mode, extra); setLoading(false); }}
+        onClick={async () => { setLoading(true); await onStart(mode, canChoosePpe ? extra : []); setLoading(false); }}
         style={{ marginTop: ".5rem" }}
       >
         <IcPlay size={14} />
@@ -411,8 +459,7 @@ function StartSession({
     </div>
   );
 }
-
-// ─────────────────────────── Monitor ───────────────────────────
+// Monitor
 function Monitor({
   token, session, ppe, onEnd, onReset, onSessionUpdate,
 }: { token: string; session: Session; ppe: PPE[]; onEnd: () => Promise<void>; onReset: () => Promise<void>; onSessionUpdate: (s: Session) => void }) {
@@ -520,10 +567,24 @@ function Monitor({
 
   const averageLatency = latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
   const isLive = status.startsWith("Monitorando");
+  const resetTracks = result?.tracks ?? Object.values(session.tracks ?? {}).map((track) => ({
+    track_id: track.track_id,
+    ppe: track.ppe,
+    compliant: session.required_ppe.every((code) => track.ppe[code]?.state === "present"),
+  }));
+  const hasResetTracks = resetTracks.length > 0;
+  const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
+    session.required_ppe.every((code) => track.ppe[code]?.state === "present")
+  );
+  const resetHint = !hasResetTracks
+    ? "Aguardando a câmera reconhecer a pessoa e os EPIs obrigatórios."
+    : resetReady
+      ? "Todos os EPIs obrigatórios estão conformes. Reset liberado."
+      : "Reset bloqueado: todos os EPIs obrigatórios precisam estar visíveis e conformes.";
 
   return (
     <div>
-      {/* ── Header with controls always visible ── */}
+      {/* Header with controls always visible */}
       <div className="monitor-header">
         <div className="monitor-title">
           <h1>Sessão {session.mode === "individual" ? "individual" : "em grupo"}</h1>
@@ -538,9 +599,12 @@ function Monitor({
             {session.machine_locked ? "CORTE SIMULADO" : "Máquina liberada"}
           </div>
           {session.machine_locked && (
-            <button className="btn-sm" onClick={onReset}>
-              <IcRefresh size={13} /> Resetar
-            </button>
+            <div className="reset-control">
+              <button className="btn-sm" onClick={onReset} disabled={!resetReady} title={resetHint}>
+                <IcRefresh size={13} /> Resetar
+              </button>
+              <span className={`reset-hint ${resetReady ? "ok" : "blocked"}`}>{resetHint}</span>
+            </div>
           )}
           {!confirmEnd ? (
             <button className="btn-danger btn-sm" onClick={() => setConfirmEnd(true)}>
@@ -558,13 +622,13 @@ function Monitor({
         </div>
       </div>
 
-      {/* ── Video ── */}
+      {/* Video */}
       <div className="video-wrap">
         <video ref={videoRef} muted playsInline />
         <canvas ref={overlayRef} />
       </div>
 
-      {/* ── Metrics ── */}
+      {/* Metrics */}
       <div className="metrics">
         <div className="metric-card">
           <div className="metric-value">{result?.inference_ms.toFixed(0) ?? 0} ms</div>
@@ -584,39 +648,44 @@ function Monitor({
         </div>
       </div>
 
-      {/* ── Track Cards ── */}
+      {/* Track Cards */}
       <div className="track-grid">
-        {(result?.tracks ?? []).map((track) => (
-          <div key={track.track_id} className={`track-card ${track.compliant ? "ok" : "alert"}`}>
+        {(result?.tracks ?? []).map((track) => {
+          const displayCompliant = track.compliant && !session.machine_locked;
+          return (
+          <div key={track.track_id} className={`track-card ${displayCompliant ? "ok" : "alert"}`}>
             <div className="track-card-header">
               <span className="track-id">Track {track.track_id}</span>
-              <span className={`badge ${track.compliant ? "badge-green" : "badge-red"}`}>
-                <span className={`dot ${track.compliant ? "dot-green" : "dot-red"}`} />
-                {track.compliant ? "Conforme" : "Alerta"}
+              <span className={`badge ${displayCompliant ? "badge-green" : "badge-red"}`}>
+                <span className={`dot ${displayCompliant ? "dot-green" : "dot-red"}`} />
+                {displayCompliant ? "Conforme" : session.machine_locked ? "Aguardando reset" : "Alerta"}
               </span>
             </div>
             <div className="track-ppe-list">
               {session.required_ppe.map((code) => {
                 const item = track.ppe[code];
                 const state = item?.state ?? "unknown";
+                const displayState = session.machine_locked ? "absent" : state;
+                const statusText = session.machine_locked ? "Reset pendente" : `${state === "present" ? "✓" : state === "absent" ? "✕" : "?"} Nível ${item?.severity ?? 0}`;
                 return (
                   <div key={code} className="track-ppe-item">
                     <span className="track-ppe-name">{ppeName[code] ?? code}</span>
-                    <span className={`track-ppe-status ${state}`}>
-                      {state === "present" ? "✓" : state === "absent" ? "✗" : "?"} Nível {item?.severity ?? 0}
+                    <span className={`track-ppe-status ${displayState}`}>
+                      {statusText}
                     </span>
                   </div>
                 );
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ─────────────────────────── HistoryView ───────────────────────────
+// HistoryView
 function HistoryView({ sessions, token }: { sessions: Session[]; token: string }) {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -725,7 +794,7 @@ function HistoryView({ sessions, token }: { sessions: Session[]; token: string }
   );
 }
 
-// ─────────────────────────── Charts ───────────────────────────
+// Charts
 function TrackComplianceChart({ report }: { report: Report }) {
   const rows = report.track_summaries.slice(0, 6).map((t) => ({
     label: t.track_id,
@@ -830,7 +899,7 @@ function ComplianceDonut({ report }: { report: Report }) {
   );
 }
 
-// ─────────────────────────── ReportView ───────────────────────────
+// ReportView
 function ReportView({ report, token }: { report: Report; token: string }) {
   function downloadPdf() {
     fetch(`${API_BASE}/api/reports/${report.session_id}/pdf`, {
@@ -881,7 +950,7 @@ function ReportView({ report, token }: { report: Report; token: string }) {
   );
 }
 
-// ─────────────────────────── AdminPanel ───────────────────────────
+// AdminPanel
 function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
   const [dashboard, setDashboard] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
@@ -891,8 +960,11 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("senha123");
+  const [selectedPresetId, setSelectedPresetId] = useState("");
   const [presetName, setPresetName] = useState("");
   const [presetPpe, setPresetPpe] = useState<string[]>([]);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const names = ppeNameMap(ppe);
 
   async function load() {
     const [dash, u, pr, jr, ar] = await Promise.all([
@@ -905,6 +977,62 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
     setDashboard(dash); setUsers(u); setPresets(pr); setJobs(jr); setAreas(ar);
   }
 
+  async function createEmployee(event: React.FormEvent) {
+    event.preventDefault();
+    setMessage(null);
+    try {
+      await api("/api/users", token, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          username,
+          password,
+          role: "employee",
+          job_role_id: jobs[0]?.id,
+          area_id: areas[0]?.id,
+          preset_id: selectedPresetId || null,
+        }),
+      });
+      setName(""); setUsername(""); setSelectedPresetId("");
+      setMessage({ type: "success", text: "Funcionário cadastrado com sucesso." });
+      await load();
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao cadastrar funcionário." });
+    }
+  }
+
+  async function createPreset(event: React.FormEvent) {
+    event.preventDefault();
+    setMessage(null);
+    try {
+      if (!presetName.trim()) throw new Error("Informe o nome do preset.");
+      if (!presetPpe.length) throw new Error("Selecione pelo menos um EPI.");
+      await api("/api/presets", token, {
+        method: "POST",
+        body: JSON.stringify({ name: presetName, ppe_codes: presetPpe, active: true }),
+      });
+      setPresetName(""); setPresetPpe([]);
+      setMessage({ type: "success", text: "Preset salvo com sucesso." });
+      await load();
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao salvar preset." });
+    }
+  }
+
+  async function updateUserPreset(userId: string, presetId: string) {
+    setMessage(null);
+    try {
+      await api(`/api/users/${userId}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ preset_id: presetId || null }),
+      });
+      setMessage({ type: "success", text: "Preset do funcionário atualizado." });
+      await load();
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao vincular preset." });
+    }
+  }
+
   useEffect(() => {
     load();
     const id = window.setInterval(load, 5000);
@@ -914,6 +1042,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
   return (
     <div>
       <div className="admin-section-title">Painel administrativo</div>
+      {message && <div className={`admin-message ${message.type}`}>{message.text}</div>}
 
       {dashboard && (
         <div className="metrics">
@@ -925,14 +1054,7 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       )}
 
       <div className="admin-grid">
-        <form className="admin-form" onSubmit={async (e) => {
-          e.preventDefault();
-          await api("/api/users", token, {
-            method: "POST",
-            body: JSON.stringify({ name, username, password, role: "employee", job_role_id: jobs[0]?.id, area_id: areas[0]?.id }),
-          });
-          setName(""); setUsername(""); await load();
-        }}>
+        <form className="admin-form" onSubmit={createEmployee}>
           <h3>Cadastrar funcionário</h3>
           <label>Nome completo</label>
           <input placeholder="Ex: João da Silva" value={name} onChange={(e) => setName(e.target.value)} />
@@ -940,14 +1062,17 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
           <input placeholder="Ex: joao.silva" value={username} onChange={(e) => setUsername(e.target.value)} />
           <label>Senha inicial</label>
           <input placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <label>Preset vinculado</label>
+          <select value={selectedPresetId} onChange={(e) => setSelectedPresetId(e.target.value)}>
+            <option value="">Sem preset específico</option>
+            {presets.filter((preset) => preset.active).map((preset) => (
+              <option key={preset.id} value={preset.id}>{preset.name} — {formatPpeNames(preset.ppe_codes, ppe)}</option>
+            ))}
+          </select>
           <button className="btn-primary" style={{ marginTop: ".25rem" }}>Cadastrar</button>
         </form>
 
-        <form className="admin-form" onSubmit={async (e) => {
-          e.preventDefault();
-          await api("/api/presets", token, { method: "POST", body: JSON.stringify({ name: presetName, ppe_codes: presetPpe, active: true }) });
-          setPresetName(""); setPresetPpe([]); await load();
-        }}>
+        <form className="admin-form" onSubmit={createPreset}>
           <h3>Novo preset de EPIs</h3>
           <label>Nome do preset</label>
           <input placeholder="Ex: Solda, Construção..." value={presetName} onChange={(e) => setPresetName(e.target.value)} />
@@ -969,15 +1094,27 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
       <div className="admin-sub-title">Funcionários cadastrados</div>
       <div className="data-table">
         <table>
-          <thead><tr><th>Nome</th><th>Login</th><th>Status</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Login</th><th>Preset</th><th>Status</th></tr></thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.name}</td>
-                <td style={{ color: "var(--tx-secondary)" }}>{u.username}</td>
-                <td><span className={`badge ${u.active ? "badge-green" : "badge-muted"}`}>{u.active ? "Ativo" : "Inativo"}</span></td>
-              </tr>
-            ))}
+            {users.map((u) => {
+              const linked = presets.find((preset) => preset.id === u.preset_id);
+              return (
+                <tr key={u.id}>
+                  <td>{u.name}</td>
+                  <td style={{ color: "var(--tx-secondary)" }}>{u.username}</td>
+                  <td>
+                    <select className="table-select" value={u.preset_id ?? ""} onChange={(e) => updateUserPreset(u.id, e.target.value)} disabled={u.role === "admin"}>
+                      <option value="">Sem preset específico</option>
+                      {presets.filter((preset) => preset.active).map((preset) => (
+                        <option key={preset.id} value={preset.id}>{preset.name}</option>
+                      ))}
+                    </select>
+                    {linked && <div className="table-help">{formatPpeNames(linked.ppe_codes, ppe)}</div>}
+                  </td>
+                  <td><span className={`badge ${u.active ? "badge-green" : "badge-muted"}`}>{u.active ? "Ativo" : "Inativo"}</span></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -987,11 +1124,11 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
         <table>
           <thead><tr><th>Nome</th><th>EPIs</th><th>Status</th></tr></thead>
           <tbody>
-            {presets.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td style={{ color: "var(--tx-secondary)" }}>{p.ppe_codes.join(", ")}</td>
-                <td><span className={`badge ${p.active ? "badge-blue" : "badge-muted"}`}>{p.active ? "Ativo" : "Inativo"}</span></td>
+            {presets.map((preset) => (
+              <tr key={preset.id}>
+                <td>{preset.name}</td>
+                <td style={{ color: "var(--tx-secondary)" }}>{preset.ppe_codes.map((code) => names[code] ?? code).join(", ")}</td>
+                <td><span className={`badge ${preset.active ? "badge-blue" : "badge-muted"}`}>{preset.active ? "Ativo" : "Inativo"}</span></td>
               </tr>
             ))}
           </tbody>
@@ -1000,5 +1137,4 @@ function AdminPanel({ token, ppe }: { token: string; ppe: PPE[] }) {
     </div>
   );
 }
-
 createRoot(document.getElementById("root")!).render(<App />);
