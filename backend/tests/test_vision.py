@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 import numpy as np
 
@@ -27,7 +27,7 @@ class Result:
 
 
 class FakeModel:
-    names = {0: "Helmet", 1: "Person"}
+    names = {0: "Helmet", 1: "Person", 2: "Goggles", 3: "No-Goggles"}
 
     def __init__(self, boxes):
         self._boxes = boxes
@@ -66,3 +66,50 @@ def test_vision_assigns_to_single_person_even_when_region_is_strict():
     track_id = next(iter(assignments))
     assert assignments[track_id][0].ppe_code == "helmet"
     assert detections[1].track_id == track_id
+
+def test_vision_assigns_goggles_to_nearest_head_region_with_two_people():
+    service = VisionService(Path("missing.pt"))
+    service.model = FakeModel(
+        Boxes(
+            [
+                [10, 10, 90, 190],
+                [110, 10, 190, 190],
+                [130, 38, 170, 62],
+            ],
+            [0.95, 0.95, 0.92],
+            [1, 1, 2],
+        )
+    )
+    frame = np.zeros((220, 220, 3), dtype=np.uint8)
+    ppe = [PPE(code="goggles", name="\u00d3culos", positive_class="Goggles", negative_class="No-Goggles")]
+
+    detections, assignments, _ = service.infer("ses_two_people", frame, ppe)
+
+    assert "P1" in assignments
+    assert "P2" in assignments
+    assert len(assignments["P1"]) == 0
+    assert assignments["P2"][0].ppe_code == "goggles"
+    assert assignments["P2"][0].evidence == 1
+
+
+def test_vision_assigns_negative_goggles_to_correct_person_only():
+    service = VisionService(Path("missing.pt"))
+    service.model = FakeModel(
+        Boxes(
+            [
+                [10, 10, 90, 190],
+                [110, 10, 190, 190],
+                [130, 38, 170, 62],
+            ],
+            [0.95, 0.95, 0.92],
+            [1, 1, 3],
+        )
+    )
+    frame = np.zeros((220, 220, 3), dtype=np.uint8)
+    ppe = [PPE(code="goggles", name="\u00d3culos", positive_class="Goggles", negative_class="No-Goggles")]
+
+    _, assignments, _ = service.infer("ses_two_people_negative", frame, ppe)
+
+    assert len(assignments["P1"]) == 0
+    assert assignments["P2"][0].ppe_code == "goggles"
+    assert assignments["P2"][0].evidence == -1

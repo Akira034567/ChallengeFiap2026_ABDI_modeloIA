@@ -24,6 +24,14 @@ def center(box: list[float]) -> tuple[float, float]:
     return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
 
 
+def containment(inner: list[float], outer: list[float]) -> float:
+    x1, y1 = max(inner[0], outer[0]), max(inner[1], outer[1])
+    x2, y2 = min(inner[2], outer[2]), min(inner[3], outer[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    inner_area = max(1, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+    return intersection / inner_area
+
+
 def normalize_class_name(value: str) -> str:
     return value.strip().lower().replace('_', '-').replace(' ', '-')
 
@@ -171,19 +179,33 @@ class VisionService:
         for track_id, person in tracks.items():
             x1, y1, x2, y2 = person
             width, height = x2 - x1, y2 - y1
-            margin_x, margin_y = width * 0.12, height * 0.08
-            if not (x1 - margin_x <= cx <= x2 + margin_x and y1 - margin_y <= cy <= y2 + margin_y):
+            margin_x, margin_y = width * 0.16, height * 0.08
+            overlap = containment(detection.box, person)
+            if overlap < 0.18 and not (x1 - margin_x <= cx <= x2 + margin_x and y1 - margin_y <= cy <= y2 + margin_y):
                 continue
+
             relative_y = (cy - y1) / max(height, 1)
             allowed = {
-                "helmet": relative_y <= 0.38,
-                "goggles": relative_y <= 0.42,
-                "gloves": 0.2 <= relative_y <= 0.9,
+                "helmet": relative_y <= 0.45,
+                "goggles": relative_y <= 0.50,
+                "gloves": 0.18 <= relative_y <= 0.95,
             }.get(detection.ppe_code or "", True)
-            if allowed:
-                person_cx, person_cy = center(person)
-                distance = ((cx - person_cx) / max(width, 1)) ** 2 + ((cy - person_cy) / max(height, 1)) ** 2
-                candidates.append((track_id, distance))
+            if not allowed:
+                continue
+
+            if detection.ppe_code in {"helmet", "goggles"}:
+                target_x, target_y = (x1 + x2) / 2, y1 + height * 0.22
+                y_weight = 1.35
+            elif detection.ppe_code == "gloves":
+                target_x, target_y = (x1 + x2) / 2, y1 + height * 0.58
+                y_weight = 0.8
+            else:
+                target_x, target_y = center(person)
+                y_weight = 1.0
+
+            distance = ((cx - target_x) / max(width, 1)) ** 2 + y_weight * ((cy - target_y) / max(height, 1)) ** 2
+            score = distance - overlap * 0.85
+            candidates.append((track_id, score))
         return min(candidates, key=lambda item: item[1])[0] if candidates else None
 
 

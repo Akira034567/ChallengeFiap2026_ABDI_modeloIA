@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from io import BytesIO
 from statistics import mean
 
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
-from reportlab.graphics.shapes import Drawing, String
+from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -109,6 +109,8 @@ class ReportService:
             self._severity_chart(report),
             Spacer(1, 12),
             self._track_chart(report),
+            Spacer(1, 12),
+            self._timeline_chart(report),
             Spacer(1, 18),
             Paragraph("Pessoas monitoradas", styles["Heading2"]),
         ])
@@ -130,6 +132,83 @@ class ReportService:
         story.append(track_table)
         doc.build(story)
         return buffer.getvalue()
+
+    def _timeline_chart(self, report: QualityReport) -> Drawing:
+        rows = []
+        keys = []
+        for track in report.track_summaries:
+            for code in report.required_ppe:
+                key = (track.track_id, code)
+                if key not in keys:
+                    keys.append(key)
+        for item in report.timeline:
+            key = (item.track_id, item.ppe_code)
+            if key not in keys:
+                keys.append(key)
+        for event in report.events:
+            key = (event.track_id, event.ppe_code)
+            if key not in keys:
+                keys.append(key)
+        rows = keys[:8]
+        row_height = 18
+        drawing_height = max(135, 78 + len(rows) * row_height)
+        drawing = Drawing(460, drawing_height)
+        drawing.add(String(0, drawing_height - 16, "Evolu\u00e7\u00e3o temporal da sess\u00e3o", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        drawing.add(String(0, drawing_height - 32, "Verde: conforme | Cinza: ausente sem alerta | Amarelo/Rosa/Vermelho: n?veis 1/2/3", fontSize=8, fillColor=colors.HexColor("#475569")))
+
+        start = report.session_started_at or report.generated_at
+        end = report.session_ended_at or start
+        duration = max(1, (end - start).total_seconds() or report.duration_seconds or 1)
+        x0, y0, width = 88, drawing_height - 62, 330
+        tick_color = colors.HexColor("#CBD5E1")
+        for ratio in (0, 0.25, 0.5, 0.75, 1):
+            x = x0 + width * ratio
+            drawing.add(Rect(x, y0 - max(8, len(rows) * row_height), 0.5, max(8, len(rows) * row_height), fillColor=tick_color, strokeColor=tick_color))
+            drawing.add(String(x - 8, y0 + 8, f"{int(duration * ratio)}s", fontSize=7, fillColor=colors.HexColor("#64748B")))
+
+        def status_color(state: str, severity: int):
+            if severity >= 3:
+                return colors.HexColor("#EF4444")
+            if severity == 2:
+                return colors.HexColor("#FB7185")
+            if severity == 1:
+                return colors.HexColor("#F59E0B")
+            if state != "present":
+                return colors.HexColor("#94A3B8")
+            return colors.HexColor("#22C55E")
+
+        def draw_segment(row_y: float, left_s: float, right_s: float, state: str, severity: int):
+            left = max(0, min(duration, left_s))
+            right = max(left + 0.3, min(duration, right_s))
+            x = x0 + width * (left / duration)
+            w = max(1.5, width * ((right - left) / duration))
+            drawing.add(Rect(x, row_y, w, 9, fillColor=status_color(state, severity), strokeColor=None))
+
+        for index, (track_id, ppe_code) in enumerate(rows):
+            row_y = y0 - 18 - index * row_height
+            drawing.add(String(0, row_y + 1, f"{track_id} / {ppe_code}", fontSize=7, fillColor=colors.HexColor("#0F172A")))
+            drawing.add(Rect(x0, row_y, width, 9, fillColor=colors.HexColor("#E2E8F0"), strokeColor=None))
+            samples = [item for item in report.timeline if item.track_id == track_id and item.ppe_code == ppe_code]
+            samples.sort(key=lambda item: item.timestamp)
+            if samples:
+                current = samples[0]
+                segment_start = max(0, (current.timestamp - start).total_seconds())
+                for sample in samples[1:]:
+                    changed = sample.state != current.state or sample.severity != current.severity
+                    if changed:
+                        segment_end = max(segment_start + 0.3, (sample.timestamp - start).total_seconds())
+                        draw_segment(row_y, segment_start, segment_end, current.state.value if hasattr(current.state, "value") else str(current.state), current.severity)
+                        current = sample
+                        segment_start = (sample.timestamp - start).total_seconds()
+                draw_segment(row_y, segment_start, duration, current.state.value if hasattr(current.state, "value") else str(current.state), current.severity)
+            else:
+                track = next((item for item in report.track_summaries if item.track_id == track_id), None)
+                percent = track.compliant_samples / track.samples * 100 if track and track.samples else 100
+                draw_segment(row_y, 0, duration, "present" if percent >= 99.5 else "unknown", 0 if percent >= 99.5 else -1)
+        if len(keys) > len(rows):
+            drawing.add(String(0, 10, f"+ {len(keys) - len(rows)} linhas omitidas para manter o PDF compacto", fontSize=8, fillColor=colors.HexColor("#64748B")))
+        return drawing
+
 
     def _compliance_pie(self, report: QualityReport) -> Drawing:
         drawing = Drawing(460, 150)
