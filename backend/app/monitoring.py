@@ -59,12 +59,11 @@ class MonitoringEngine:
         ppe: PPE,
         assigned: list[FrameDetection],
     ) -> int:
-        relevant = [item for item in assigned if item.ppe_code == required_code]
-        if any(item.evidence == -1 for item in relevant):
+        relevant = [item for item in assigned if item.ppe_code == required_code and item.evidence in {-1, 1}]
+        if not relevant:
             return -1
-        if any(item.evidence == 1 for item in relevant):
-            return 1
-        return -1
+        strongest = max(relevant, key=lambda item: (item.confidence, 1 if item.evidence == 1 else 0))
+        return int(strongest.evidence or -1)
 
     def process(
         self,
@@ -234,11 +233,19 @@ class MonitoringEngine:
             )
             runtime.cut_created.add(code)
 
-    def all_tracks_compliant(self, session: MonitoringSession) -> bool:
+    def active_tracks(self, session: MonitoringSession) -> list[TrackedPersonSummary]:
         if not session.tracks:
+            return []
+        latest_seen = max(track.last_seen_at for track in session.tracks.values())
+        cutoff = latest_seen - timedelta(seconds=max(4, self.policy.window_seconds * 2))
+        return [track for track in session.tracks.values() if track.last_seen_at >= cutoff]
+
+    def all_tracks_compliant(self, session: MonitoringSession) -> bool:
+        tracks = self.active_tracks(session)
+        if not tracks:
             return False
         return all(
-            compliance.state == PPEState.present
-            for track in session.tracks.values()
-            for compliance in track.ppe.values()
+            track.ppe.get(code) and track.ppe[code].state == PPEState.present
+            for track in tracks
+            for code in session.required_ppe
         )

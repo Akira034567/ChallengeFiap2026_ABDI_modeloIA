@@ -49,14 +49,23 @@ class SimpleTracker:
         self.next_id = 1
 
     def update(self, boxes: list[list[float]]) -> dict[str, list[float]]:
+        boxes = sorted(boxes, key=lambda box: center(box)[0])
         available = set(self.tracks)
         result: dict[str, list[float]] = {}
         for box in boxes:
             best_id = None
-            best_score = 0.15
+            best_score = float("inf")
+            bx, by = center(box)
+            bw, bh = max(1, box[2] - box[0]), max(1, box[3] - box[1])
             for track_id in available:
-                score = iou(box, self.tracks[track_id].box)
-                if score > best_score:
+                previous = self.tracks[track_id].box
+                px, py = center(previous)
+                pw, ph = max(1, previous[2] - previous[0]), max(1, previous[3] - previous[1])
+                overlap = iou(box, previous)
+                distance = ((bx - px) / max(bw, pw, 1)) ** 2 + ((by - py) / max(bh, ph, 1)) ** 2
+                size_delta = abs(bw - pw) / max(bw, pw, 1) + abs(bh - ph) / max(bh, ph, 1)
+                score = distance + size_delta * 0.12 - overlap * 1.4
+                if (overlap >= 0.08 or distance <= 0.42) and score < best_score:
                     best_id, best_score = track_id, score
             if best_id is None:
                 best_id = f"P{self.next_id}"
@@ -67,7 +76,7 @@ class SimpleTracker:
             result[best_id] = box
         for track_id in available:
             self.tracks[track_id].missed += 1
-            if self.tracks[track_id].missed > 12:
+            if self.tracks[track_id].missed > 20:
                 del self.tracks[track_id]
         return result
 

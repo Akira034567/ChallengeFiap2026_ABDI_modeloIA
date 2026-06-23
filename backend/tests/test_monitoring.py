@@ -67,5 +67,43 @@ def test_monitoring_recovers_after_stable_presence(tmp_path: Path):
     assert session.tracks["P1"].ppe["helmet"].state == "present"
     assert session.tracks["P1"].ppe["helmet"].severity == 0
 
+def test_reset_compliance_ignores_stale_group_tracks(tmp_path: Path):
+    store = JsonStore(tmp_path / "store.json")
+    engine = MonitoringEngine(store, SimulationAdapter(store))
+    session = MonitoringSession(
+        id="ses_group_reset",
+        user_id="usr_employee",
+        mode=SessionMode.group,
+        required_ppe=["helmet"],
+    )
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    engine.process(session, {"P1": [detection("helmet", -1)]}, start)
+    engine.process(session, {"P2": [detection("helmet", 1)]}, start + timedelta(seconds=10))
+    engine.process(session, {"P2": [detection("helmet", 1)]}, start + timedelta(seconds=11))
+    engine.process(session, {"P2": [detection("helmet", 1)]}, start + timedelta(seconds=12))
+
+    assert session.tracks["P1"].ppe["helmet"].state.value == "absent"
+    assert session.tracks["P2"].ppe["helmet"].state.value == "present"
+    assert engine.all_tracks_compliant(session) is True
 
 
+def test_positive_evidence_can_beat_weaker_negative_for_same_track(tmp_path: Path):
+    store = JsonStore(tmp_path / "store.json")
+    engine = MonitoringEngine(store, SimulationAdapter(store))
+    session = MonitoringSession(
+        id="ses_conflicting_evidence",
+        user_id="usr_employee",
+        mode=SessionMode.group,
+        required_ppe=["helmet"],
+    )
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    negative = detection("helmet", -1)
+    negative.confidence = 0.55
+    positive = detection("helmet", 1)
+    positive.confidence = 0.91
+
+    for second in (0, 1, 2):
+        engine.process(session, {"P1": [negative, positive]}, start + timedelta(seconds=second))
+
+    assert session.tracks["P1"].ppe["helmet"].state.value == "present"
