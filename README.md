@@ -84,6 +84,34 @@ http://localhost:8000
 
 Em `localhost`, a câmera funciona normalmente. Para acessar de outro dispositivo na rede, como um celular, pode ser necessário configurar HTTPS, porque navegadores costumam bloquear `getUserMedia` fora de contextos seguros.
 
-## Integração futura com ESP32
 
-A interface está isolada em `MachineSafetyPort`. Hoje `SimulationAdapter` registra o corte; a futura `ESP32Adapter` pode internalizar o protocolo Wi-Fi sem alterar o restante do sistema.
+## Integração com ESP32
+
+A interface está isolada em `MachineSafetyPort`. Por padrão, o backend usa o ESP32 em `http://172.22.0.13/`.
+
+Para usar o corte real, carregue o sketch em `esp32/epi_guard_relay.ino` e confirme que o ESP32 está acessível nesse endereço:
+
+```text
+http://172.22.0.13/
+```
+
+Depois inicie normalmente:
+
+```powershell
+.
+un_backend.ps1
+```
+
+Se precisar trocar o IP futuramente, use a variável `ESP32_BASE_URL` antes de iniciar o backend:
+
+```powershell
+$env:ESP32_BASE_URL = "http://NOVO_IP_DO_ESP32"
+.
+un_backend.ps1
+```
+
+Rotas usadas pelo backend:
+
+- `GET /bloquear`: aciona o relé e corta a bancada.
+- `GET /liberar`: desaciona o relé e libera a bancada após reset manual.
+- `GET /status`: retorna o estado atual em JSON.

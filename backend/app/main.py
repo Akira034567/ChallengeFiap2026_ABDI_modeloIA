@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from .machine import SimulationAdapter
+from .machine import ESP32Adapter, SimulationAdapter
 from .models import (
     Area,
     FrameResult,
@@ -45,7 +46,9 @@ MODEL_PATH = BASE_DIR / "models" / "best.pt"
 FRONTEND_DIST = BASE_DIR.parents[0] / "frontend" / "dist"
 
 store = JsonStore(STORE_PATH)
-machine = SimulationAdapter(store)
+esp32_base_url = os.getenv("ESP32_BASE_URL", "http://172.22.0.13/").strip()
+esp32_timeout = float(os.getenv("ESP32_TIMEOUT_SECONDS", "2.5"))
+machine = ESP32Adapter(store, esp32_base_url, esp32_timeout) if esp32_base_url else SimulationAdapter(store)
 engine = MonitoringEngine(store, machine)
 reports = ReportService(store)
 vision = VisionService(MODEL_PATH)
