@@ -120,6 +120,114 @@ function percentile(values: number[], p: number) {
   return sorted[Math.min(sorted.length - 1, Math.round((sorted.length - 1) * p))];
 }
 
+
+type VisualPoseLandmark = { x: number; y: number; visibility?: number; presence?: number };
+type BrowserPoseState = {
+  landmarker: any | null;
+  loading: boolean;
+  ready: boolean;
+  error: string | null;
+};
+
+const MEDIAPIPE_TASKS_VERSION = "0.10.0";
+const VISUAL_POSE_CONNECTIONS: Array<[number, number]> = [
+  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
+  [11, 23], [12, 24], [23, 24], [23, 25], [25, 27],
+  [24, 26], [26, 28], [27, 29], [29, 31], [28, 30], [30, 32],
+];
+
+async function createBrowserPoseLandmarker() {
+  const moduleUrls = [
+    `https://cdn.skypack.dev/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
+    `https://esm.sh/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
+    `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
+  ];
+  const wasmUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
+  const modelUrl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
+  let vision: any = null;
+  let lastError: unknown = null;
+  for (const moduleUrl of moduleUrls) {
+    try {
+      vision = await import(/* @vite-ignore */ moduleUrl);
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (!vision) throw lastError instanceof Error ?lastError : new Error("MediaPipe module unavailable");
+  const fileset = await vision.FilesetResolver.forVisionTasks(wasmUrl);
+  const options = {
+    baseOptions: { modelAssetPath: modelUrl, delegate: "GPU" },
+    runningMode: "VIDEO",
+    numPoses: 4,
+    minPoseDetectionConfidence: 0.45,
+    minPosePresenceConfidence: 0.45,
+    minTrackingConfidence: 0.45,
+  };
+  try {
+    return await vision.PoseLandmarker.createFromOptions(fileset, options);
+  } catch {
+    return await vision.PoseLandmarker.createFromOptions(fileset, {
+      ...options,
+      baseOptions: { modelAssetPath: modelUrl, delegate: "CPU" },
+    });
+  }
+}
+
+function fitCanvasToVideo(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
+  const width = video.clientWidth;
+  const height = video.clientHeight;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function drawBrowserPose(canvas: HTMLCanvasElement, landmarksByPose: VisualPoseLandmark[][]) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  landmarksByPose.forEach((landmarks, index) => {
+    const hue = [164, 197, 43, 280][index % 4];
+    const color = `hsl(${hue} 85% 58%)`;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.6;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    VISUAL_POSE_CONNECTIONS.forEach(([a, b]) => {
+      const pa = landmarks[a];
+      const pb = landmarks[b];
+      const va = pa?.visibility ?? pa?.presence ?? 1;
+      const vb = pb?.visibility ?? pb?.presence ?? 1;
+      if (!pa || !pb || va < 0.35 || vb < 0.35) return;
+      ctx.beginPath();
+      ctx.moveTo(canvas.width - pa.x * canvas.width, pa.y * canvas.height);
+      ctx.lineTo(canvas.width - pb.x * canvas.width, pb.y * canvas.height);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    landmarks.forEach((point) => {
+      const visible = point.visibility ?? point.presence ?? 1;
+      if (visible < 0.35) return;
+      const x = canvas.width - point.x * canvas.width;
+      const y = point.y * canvas.height;
+      ctx.beginPath();
+      ctx.fillStyle = "rgba(2, 8, 23, .72)";
+      ctx.arc(x, y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  });
+}
+
 function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds.toFixed(0)}s`;
   const m = Math.floor(seconds / 60);
@@ -514,13 +622,17 @@ function Monitor({
 }: { token: string; session: Session; ppe: PPE[]; onEnd: () => Promise<void>; onReset: () => Promise<void>; onSessionUpdate: (s: Session) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  const poseOverlayRef = useRef<HTMLCanvasElement>(null);
   const captureRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
   const wsRef = useRef<WebSocket | null>(null);
   const inFlight = useRef(false);
   const frames = useRef(new Map<string, number>());
+  const visualPoseRef = useRef<BrowserPoseState>({ landmarker: null, loading: false, ready: false, error: null });
+  const visualPoseLoopRef = useRef<number | undefined>(undefined);
   const [result, setResult] = useState<FrameResult | null>(null);
   const [latencies, setLatencies] = useState<number[]>([]);
   const [status, setStatus] = useState("Inicializando câmera...");
+  const [visualPoseStatus, setVisualPoseStatus] = useState("Tracker visual: carregando MediaPipe");
   const [ending, setEnding] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const intervalRef = useRef<number | undefined>(undefined);
@@ -540,6 +652,13 @@ function Monitor({
     if (video) { video.pause(); video.srcObject = null; }
     const canvas = overlayRef.current;
     canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    const poseCanvas = poseOverlayRef.current;
+    poseCanvas?.getContext("2d")?.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+    if (visualPoseLoopRef.current) window.cancelAnimationFrame(visualPoseLoopRef.current);
+    visualPoseLoopRef.current = undefined;
+    visualPoseRef.current.landmarker?.close?.();
+    visualPoseRef.current = { landmarker: null, loading: false, ready: false, error: null };
+    setVisualPoseStatus("Tracker visual: parado");
     setStatus(finalStatus);
   }
 
@@ -552,11 +671,61 @@ function Monitor({
   }
 
   useEffect(() => {
+    async function ensureVisualPoseLandmarker() {
+      const state = visualPoseRef.current;
+      if (state.ready || state.loading) return;
+      state.loading = true;
+      state.error = null;
+      setVisualPoseStatus("Tracker visual: carregando MediaPipe");
+      try {
+        state.landmarker = await createBrowserPoseLandmarker();
+        state.ready = true;
+        setVisualPoseStatus("Tracker visual: MediaPipe ativo");
+      } catch (err) {
+        state.error = err instanceof Error ?err.message : "Visual pose tracker unavailable";
+        state.ready = false;
+        setVisualPoseStatus("Tracker visual indisponível: usando apenas métricas do backend");
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function startVisualPoseLoop() {
+      if (visualPoseLoopRef.current) return;
+      void ensureVisualPoseLandmarker();
+      let lastVideoTime = -1;
+      const tick = () => {
+        const canvas = poseOverlayRef.current;
+        const video = videoRef.current;
+        if (stoppingRef.current || !canvas || !video) {
+          visualPoseLoopRef.current = undefined;
+          return;
+        }
+        fitCanvasToVideo(canvas, video);
+        const ctx = canvas.getContext("2d");
+        const landmarker = visualPoseRef.current.landmarker;
+        if (landmarker && video.readyState >= 2 && video.videoWidth > 0 && video.currentTime !== lastVideoTime) {
+          try {
+            const poses = landmarker.detectForVideo(video, performance.now());
+            drawBrowserPose(canvas, poses.landmarks ?? []);
+            lastVideoTime = video.currentTime;
+          } catch {
+            ctx?.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        } else if (!landmarker) {
+          ctx?.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        visualPoseLoopRef.current = window.requestAnimationFrame(tick);
+      };
+      visualPoseLoopRef.current = window.requestAnimationFrame(tick);
+    }
+
     async function start() {
       stoppingRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      startVisualPoseLoop();
       const socket = new WebSocket(`${wsBase()}/api/ws/inference?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(session.id)}`);
       wsRef.current = socket;
       socket.onopen = () => setStatus("Monitorando em tempo real");
@@ -581,13 +750,14 @@ function Monitor({
         const video = videoRef.current;
         if (!video || socket.readyState !== WebSocket.OPEN || inFlight.current || video.videoWidth === 0) return;
         const capture = captureRef.current;
-        const scale = 640 / video.videoWidth;
-        capture.width = 640; capture.height = Math.round(video.videoHeight * scale);
+        const captureWidth = 512;
+        const scale = captureWidth / video.videoWidth;
+        capture.width = captureWidth; capture.height = Math.round(video.videoHeight * scale);
         capture.getContext("2d")?.drawImage(video, 0, 0, capture.width, capture.height);
         const frameId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         frames.current.set(frameId, performance.now());
         inFlight.current = true;
-        socket.send(JSON.stringify({ frame_id: frameId, captured_at_ms: Date.now(), image: capture.toDataURL("image/jpeg", 0.72) }));
+        socket.send(JSON.stringify({ frame_id: frameId, captured_at_ms: Date.now(), image: capture.toDataURL("image/jpeg", 0.62) }));
       }, 250);
       intervalRef.current = interval;
     }
@@ -600,7 +770,7 @@ function Monitor({
       const sx = canvas.width / next.image_width; const sy = canvas.height / next.image_height;
       next.detections.forEach((det) => {
         const [x1, y1, x2, y2] = det.box;
-        const isPerson = det.class_name === "Person";
+        const isPerson = det.class_name.toLowerCase() === "person";
         ctx.strokeStyle = isPerson ?"#38bdf8" : det.evidence === -1 ?"#ef4444" : "#22c55e";
         ctx.lineWidth = isPerson ?3 : 2;
         const drawX = canvas.width - x2 * sx;
@@ -609,46 +779,14 @@ function Monitor({
         ctx.font = "13px Inter, sans-serif";
         ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
       });
-      const skeleton: Array<[number, number]> = [[1,0],[2,1],[3,2],[4,0],[5,4],[6,5],[7,0],[17,7],[9,8],[10,9],[11,8],[12,11],[13,12],[14,8],[15,14],[16,15],[17,8]];
       (next.posture ?? []).forEach((posture) => {
         const [x1, y1, x2] = posture.box;
         const drawX = canvas.width - x2 * sx;
         const drawY = Math.max(22, y1 * sy - 8);
         const color = posture.severity >= 2 ?"#ef4444" : posture.severity === 1 ?"#f59e0b" : "#a78bfa";
-        const keypoints = posture.keypoints_2d ?? [];
-        if (keypoints.length) {
-          ctx.save();
-          ctx.setLineDash([7, 5]);
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2.4;
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 8;
-          skeleton.forEach(([a, b]) => {
-            const pa = keypoints[a];
-            const pb = keypoints[b];
-            if (!pa || !pb || (pa[2] ?? 0) < 0.25 || (pb[2] ?? 0) < 0.25) return;
-            ctx.beginPath();
-            ctx.moveTo(canvas.width - pa[0] * sx, pa[1] * sy);
-            ctx.lineTo(canvas.width - pb[0] * sx, pb[1] * sy);
-            ctx.stroke();
-          });
-          ctx.setLineDash([]);
-          keypoints.forEach((point) => {
-            if ((point[2] ?? 0) < 0.25) return;
-            ctx.beginPath();
-            ctx.fillStyle = "rgba(2, 8, 23, .72)";
-            ctx.arc(canvas.width - point[0] * sx, point[1] * sy, 4.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.fillStyle = color;
-            ctx.arc(canvas.width - point[0] * sx, point[1] * sy, 2.5, 0, Math.PI * 2);
-            ctx.fill();
-          });
-          ctx.restore();
-        }
-        const label = `Postura ${posture.track_id}: ${posture.state.toUpperCase()} · REBA ${posture.reba_score.toFixed(0)} · ${posture.ergonomic_score.toFixed(0)}/100`;
+        // Camera skeleton is drawn only by the browser-side lightweight tracker.
+        // Backend posture data remains the source for metrics, cards and reports.
+        const label = `Postura ${posture.track_id}: ${posture.state.toUpperCase()} - REBA ${posture.reba_score.toFixed(0)} - ${posture.ergonomic_score.toFixed(0)}/100`;
         ctx.font = "700 13px Inter, sans-serif";
         const width = ctx.measureText(label).width + 12;
         ctx.fillStyle = "rgba(2, 8, 23, .78)";
@@ -674,6 +812,9 @@ function Monitor({
     return postureByTrack.get(trackId)
       ?? (resetTracks.length === 1 && postureItems.length === 1 ?postureItems[0] : undefined);
   }
+  const displayTracks = (result?.tracks ?? []).filter((track, index, items) =>
+    items.findIndex((item) => item.track_id === track.track_id) === index
+  );
   const hasResetTracks = resetTracks.length > 0;
   const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
     session.required_ppe.every((code) => {
@@ -731,6 +872,8 @@ function Monitor({
       <div className="video-wrap">
         <video ref={videoRef} muted playsInline />
         <canvas ref={overlayRef} />
+        <canvas ref={poseOverlayRef} className="pose-overlay" />
+        <div className={`visual-pose-badge ${visualPoseRef.current.ready ?"ok" : "warn"}`}>{visualPoseStatus}</div>
       </div>
 
       {/* Metrics */}
@@ -755,7 +898,7 @@ function Monitor({
 
       {/* Track Cards */}
       <div className="track-grid">
-        {(result?.tracks ?? []).map((track) => {
+        {displayTracks.map((track) => {
           const trackBlocked = session.required_ppe.some((code) => {
             const item = track.ppe[code];
             return item && item.state !== "present" && (item.severity ?? 0) >= 3;
