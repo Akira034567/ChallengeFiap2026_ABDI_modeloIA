@@ -28,6 +28,7 @@ imagens_teste/
 *.exe
 *.pt
 !backend/models/best.pt
+!backend/models/posture/final.pth
 !frontend/public/logo.jpg
 
 # Local settings

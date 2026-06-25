@@ -115,3 +115,22 @@ Rotas usadas pelo backend:
 - `GET /bloquear`: aciona o relé e corta a bancada.
 - `GET /liberar`: desaciona o relé e libera a bancada após reset manual.
 - `GET /status`: retorna o estado atual em JSON.
+
+## Modelo de postura ergonômica
+
+O backend também pode carregar o modelo MultiPose3D para análise ergonômica de postura. Por padrão, ele procura o peso em `backend/models/posture/final.pth`; se esse arquivo não existir neste PC, usa o caminho local `C:\Users\Pichau\Downloads\projetos\projetos\MultiPose3D\checkpoints\final.pth` como fallback.
+
+Em outro computador, copie o `final.pth` para `backend/models/posture/final.pth` ou defina a variável de ambiente antes de iniciar o backend:
+
+```powershell
+$env:POSTURE_MODEL_PATH="C:\caminho\para\final.pth"
+.\run_backend.ps1
+```
+
+Para desativar temporariamente a análise de postura:
+
+```powershell
+$env:POSTURE_ENABLED="0"
+.\run_backend.ps1
+```
+

@@ -22,6 +22,7 @@ from .models import (
     MachineCommand,
     MonitoringSession,
     PPE,
+    PostureSnapshot,
     Preset,
     QualityReport,
     SessionCreate,
@@ -34,6 +35,7 @@ from .models import (
     UserUpdate,
 )
 from .monitoring import MonitoringEngine
+from .posture import PostureService
 from .reports import ReportService
 from .security import create_token, decode_token, hash_password, verify_password
 from .store import JsonStore
@@ -43,6 +45,13 @@ from .vision import VisionService
 BASE_DIR = Path(__file__).resolve().parents[1]
 STORE_PATH = BASE_DIR / "data" / "store.json"
 MODEL_PATH = BASE_DIR / "models" / "best.pt"
+DEFAULT_POSTURE_MODEL_PATH = BASE_DIR / "models" / "posture" / "final.pth"
+POSTURE_SOURCE_FALLBACK = Path(r"C:\Users\Pichau\Downloads\projetos\projetos\MultiPose3D\checkpoints\final.pth")
+POSTURE_MODEL_PATH = Path(os.getenv("POSTURE_MODEL_PATH", str(DEFAULT_POSTURE_MODEL_PATH)))
+if not POSTURE_MODEL_PATH.exists() and POSTURE_SOURCE_FALLBACK.exists():
+    POSTURE_MODEL_PATH = POSTURE_SOURCE_FALLBACK
+POSTURE_ENABLED = os.getenv("POSTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+POSTURE_INTERVAL_SECONDS = float(os.getenv("POSTURE_INTERVAL_SECONDS", "1.0"))
 FRONTEND_DIST = BASE_DIR.parents[0] / "frontend" / "dist"
 
 store = JsonStore(STORE_PATH)
@@ -52,6 +61,7 @@ machine = ESP32Adapter(store, esp32_base_url, esp32_timeout) if esp32_base_url e
 engine = MonitoringEngine(store, machine)
 reports = ReportService(store)
 vision = VisionService(MODEL_PATH)
+posture = PostureService(POSTURE_MODEL_PATH, enabled=POSTURE_ENABLED, interval_seconds=POSTURE_INTERVAL_SECONDS)
 
 app = FastAPI(title="EPI Guard", version="0.1.0")
 app.add_middleware(
@@ -68,6 +78,7 @@ bearer = HTTPBearer()
 @app.on_event("startup")
 def startup() -> None:
     vision.load()
+    posture.load()
 
 
 def public_user(user: User) -> UserPublic:
@@ -124,6 +135,9 @@ def health() -> dict:
         "model_ready": vision.ready,
         "model_error": vision.error,
         "model_path": str(MODEL_PATH),
+        "posture_ready": posture.ready,
+        "posture_error": posture.error,
+        "posture_model_path": str(POSTURE_MODEL_PATH),
     }
 
 
@@ -348,7 +362,24 @@ async def inference_ws(
             frame_id = str(payload["frame_id"])
             frame = vision.decode(str(payload["image"]))
             ppe_items = [ppe for ppe in store.list("ppe", PPE) if ppe.code in session.required_ppe]
-            detections, assignments, inference_ms = vision.infer(session.id, frame, ppe_items)
+            detections, assignments, ppe_inference_ms = vision.infer(session.id, frame, ppe_items)
+            posture_items, posture_inference_ms = posture.infer(session.id, frame, detections)
+            if posture_items and posture_inference_ms > 0:
+                captured_at = datetime.now(timezone.utc)
+                session.posture_timeline.extend(
+                    PostureSnapshot(
+                        timestamp=captured_at,
+                        track_id=item.track_id if session.mode.value == "group" else "employee",
+                        state=item.state,
+                        severity=item.severity,
+                        reba_score=item.reba_score,
+                        ergonomic_score=item.ergonomic_score,
+                        confidence=item.confidence,
+                    )
+                    for item in posture_items
+                )
+                session.posture_timeline = session.posture_timeline[-5000:]
+            inference_ms = ppe_inference_ms + posture_inference_ms
             tracks = engine.process(session, assignments)
             processing_ms = (time.perf_counter() - processing_started) * 1000 - inference_ms
             server_total_ms = (time.time() * 1000) - received_at_ms
@@ -370,6 +401,7 @@ async def inference_ws(
                 image_height=int(frame.shape[0]),
                 detections=detections,
                 tracks=tracks,
+                posture=posture_items,
                 machine_locked=session.machine_locked,
                 inference_ms=inference_ms,
                 processing_ms=max(0, processing_ms),

@@ -306,6 +306,15 @@ input::placeholder { color: var(--tx-muted); }
 .track-card.alert { background: rgba(239,68,68,.07);  border-color: rgba(239,68,68,.28); }
 .track-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .65rem; }
 .track-id { font-weight: 700; font-size: .92rem; }
+.track-posture { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .65rem; padding: .55rem .65rem; border-radius: var(--r-md); font-size: .78rem; border: 1px solid rgba(167,139,250,.24); background: rgba(167,139,250,.09); }
+.track-posture span { color: var(--tx-secondary); }
+.track-posture strong { color: #ddd6fe; font-size: .78rem; text-align: right; }
+.track-posture.apto { border-color: rgba(16,185,129,.25); background: rgba(16,185,129,.08); }
+.track-posture.apto strong { color: #6ee7b7; }
+.track-posture.atencao { border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.09); }
+.track-posture.atencao strong { color: #fcd34d; }
+.track-posture.inapto { border-color: rgba(239,68,68,.32); background: rgba(239,68,68,.1); }
+.track-posture.inapto strong { color: #fca5a5; }
 .track-ppe-list { display: grid; gap: .32rem; }
 .track-ppe-item { display: flex; align-items: center; justify-content: space-between; font-size: .8rem; }
 .track-ppe-name { color: var(--tx-secondary); }
@@ -566,6 +575,12 @@ input::placeholder { color: var(--tx-muted); }
   border-color: rgba(16,185,129,.28);
 }
 
+.posture-summary-list { display: grid; gap: .65rem; }
+.posture-summary-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: .8rem; align-items: center; padding: .7rem .8rem; border-radius: var(--r-md); background: rgba(148,163,184,.08); border: 1px solid var(--bd-subtle); color: var(--tx-secondary); font-size: .82rem; }
+.posture-summary-row strong { color: var(--tx-primary); }
+.posture-summary-row.severity-0 { border-color: rgba(16,185,129,.25); background: rgba(16,185,129,.07); }
+.posture-summary-row.severity-1 { border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.08); }
+.posture-summary-row.severity-2 { border-color: rgba(239,68,68,.3); background: rgba(239,68,68,.08); }
 .timeline-card { min-height: 270px; }
 .timeline-header { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
 .timeline-legend { display: flex; gap: .7rem; flex-wrap: wrap; justify-content: flex-end; font-size: .72rem; color: var(--tx-secondary); }

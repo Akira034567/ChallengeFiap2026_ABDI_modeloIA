@@ -68,6 +68,7 @@ class ReportService:
             track_summaries=list(session.tracks.values()),
             events=sorted(events, key=lambda event: event.started_at),
             timeline=sorted(session.timeline, key=lambda item: item.timestamp),
+            posture_timeline=sorted(session.posture_timeline, key=lambda item: item.timestamp),
             session_started_at=session.started_at,
             session_ended_at=session.ended_at,
         )

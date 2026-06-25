@@ -39,11 +39,23 @@ type ComplianceSnapshot = {
   ppe_code: string; state: string; severity: number; ratio: number;
 };
 
+type PostureSnapshot = {
+  timestamp: string; track_id: string; state: string; severity: number;
+  reba_score: number; ergonomic_score: number; confidence: number;
+};
+
 type Detection = { class_name: string; confidence: number; box: number[]; track_id?: string | null; ppe_code?: string | null; evidence?: number | null };
+
+type PostureDetection = {
+  track_id: string; box: number[]; reba_score: number; ergonomic_score: number;
+  state: string; severity: number; confidence: number; posture_mode?: string | null;
+  penalties?: Record<string, number>;
+};
 
 type FrameResult = {
   frame_id: string; image_width: number; image_height: number; detections: Detection[];
   tracks: Array<{ track_id: string; ppe: Record<string, { state: string; ratio: number; severity: number }>; compliant: boolean }>;
+  posture?: PostureDetection[];
   machine_locked: boolean; inference_ms: number; processing_ms: number;
   server_total_ms: number; server_sent_at_ms: number;
 };
@@ -53,6 +65,7 @@ type Report = {
   compliance_percent: number; events_by_severity: Record<string, number>;
   infractions: number; machine_cuts: number; latency: Record<string, number>;
   track_summaries: TrackSummary[]; events?: SafetyEvent[]; timeline?: ComplianceSnapshot[];
+  posture_timeline?: PostureSnapshot[];
   session_started_at?: string | null; session_ended_at?: string | null;
 };
 
@@ -534,7 +547,7 @@ function Monitor({
         const e2e = sent ?performance.now() - sent : parsed.server_total_ms;
         frames.current.delete(parsed.frame_id);
         setResult(parsed);
-        setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks`);
+        setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks · ${parsed.posture?.length ?? 0} posturas`);
         setLatencies((items) => [...items.slice(-59), e2e]);
         drawOverlay(parsed);
         if (!stoppingRef.current)
@@ -572,6 +585,19 @@ function Monitor({
         ctx.font = "13px Inter, sans-serif";
         ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
       });
+      (next.posture ?? []).forEach((posture) => {
+        const [x1, y1, x2] = posture.box;
+        const drawX = canvas.width - x2 * sx;
+        const drawY = Math.max(22, y1 * sy - 8);
+        const color = posture.severity >= 2 ?"#ef4444" : posture.severity === 1 ?"#f59e0b" : "#a78bfa";
+        const label = `Postura ${posture.track_id}: ${posture.state.toUpperCase()} · REBA ${posture.reba_score.toFixed(0)} · ${posture.ergonomic_score.toFixed(0)}/100`;
+        ctx.font = "700 13px Inter, sans-serif";
+        const width = ctx.measureText(label).width + 12;
+        ctx.fillStyle = "rgba(2, 8, 23, .78)";
+        ctx.fillRect(drawX, drawY - 15, width, 20);
+        ctx.fillStyle = color;
+        ctx.fillText(label, drawX + 6, drawY);
+      });
     }
     start().catch((err) => setStatus(err instanceof Error ?err.message : "Falha ao iniciar câmera"));
     return () => { stopMonitoring("Sessão encerrada"); };
@@ -584,6 +610,7 @@ function Monitor({
     ppe: track.ppe,
     compliant: session.required_ppe.every((code) => track.ppe[code]?.state === "present"),
   }));
+  const postureByTrack = new Map((result?.posture ?? []).map((item) => [item.track_id, item]));
   const hasResetTracks = resetTracks.length > 0;
   const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
     session.required_ppe.every((code) => {
@@ -684,6 +711,16 @@ function Monitor({
                 {displayCompliant ?"Conforme" : trackBlocked ?"Bloqueado" : "Alerta"}
               </span>
             </div>
+            {postureByTrack.get(track.track_id) && (
+              <div className={`track-posture ${postureByTrack.get(track.track_id)?.state ?? ""}`}>
+                <span>Postura ergonômica</span>
+                <strong>
+                  {postureByTrack.get(track.track_id)?.state === "apto" ?"Apto" : postureByTrack.get(track.track_id)?.state === "atencao" ?"Atenção" : "Inapto"}
+                  {" · REBA "}{postureByTrack.get(track.track_id)?.reba_score.toFixed(0)}
+                  {" · "}{postureByTrack.get(track.track_id)?.ergonomic_score.toFixed(0)}/100
+                </strong>
+              </div>
+            )}
             <div className="track-ppe-list">
               {session.required_ppe.map((code) => {
                 const item = track.ppe[code];
@@ -941,6 +978,37 @@ function statusForSeverity(severity: number, state = "present") {
   return { label: "Conforme", className: "ok" };
 }
 
+function PostureSummaryChart({ report }: { report: Report }) {
+  const samples = report.posture_timeline ?? [];
+  const tracks = Array.from(new Set(samples.map((item) => item.track_id)));
+  if (!samples.length) return null;
+  return (
+    <div className="chart-card wide">
+      <div className="chart-header">
+        <div className="chart-title">Postura ergonômica</div>
+        <div className="chart-subtitle">Média de REBA e score ergonômico por pessoa/track</div>
+      </div>
+      <div className="posture-summary-list">
+        {tracks.map((trackId) => {
+          const items = samples.filter((item) => item.track_id === trackId);
+          const avgReba = items.reduce((sum, item) => sum + item.reba_score, 0) / items.length;
+          const avgScore = items.reduce((sum, item) => sum + item.ergonomic_score, 0) / items.length;
+          const worstSeverity = Math.max(...items.map((item) => item.severity));
+          const label = worstSeverity >= 2 ?"Inapto" : worstSeverity === 1 ?"Atenção" : "Apto";
+          return (
+            <div className={`posture-summary-row severity-${worstSeverity}`} key={trackId}>
+              <strong>{trackId}</strong>
+              <span>{label}</span>
+              <span>REBA médio {avgReba.toFixed(1)}</span>
+              <span>Score {avgScore.toFixed(1)}/100</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SessionTimelineChart({ report }: { report: Report }) {
   const snapshots = (report.timeline ?? []).slice().sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const events = (report.events ?? []).slice().sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
@@ -1131,6 +1199,7 @@ function ReportView({ report, token }: { report: Report; token: string }) {
         <SeverityChart report={report} />
         <LatencyChart report={report} />
         <TrackComplianceChart report={report} />
+        <PostureSummaryChart report={report} />
         <SessionTimelineChart report={report} />
       </div>
 

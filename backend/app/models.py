@@ -158,6 +158,16 @@ class ComplianceSnapshot(BaseModel):
     ratio: float = 0
 
 
+class PostureSnapshot(BaseModel):
+    timestamp: datetime
+    track_id: str
+    state: str
+    severity: int = 0
+    reba_score: float = 0
+    ergonomic_score: float = 0
+    confidence: float = 0
+
+
 class MonitoringSession(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ses"))
     user_id: str
@@ -172,6 +182,7 @@ class MonitoringSession(BaseModel):
     active_track_ids: list[str] = Field(default_factory=list)
     latency_metrics: list[LatencyMetric] = Field(default_factory=list)
     timeline: list[ComplianceSnapshot] = Field(default_factory=list)
+    posture_timeline: list[PostureSnapshot] = Field(default_factory=list)
 
 
 class SafetyEvent(BaseModel):
@@ -221,6 +232,7 @@ class QualityReport(BaseModel):
     track_summaries: list[TrackedPersonSummary]
     events: list[SafetyEvent] = Field(default_factory=list)
     timeline: list[ComplianceSnapshot] = Field(default_factory=list)
+    posture_timeline: list[PostureSnapshot] = Field(default_factory=list)
     session_started_at: datetime | None = None
     session_ended_at: datetime | None = None
 
@@ -253,12 +265,25 @@ class FrameDetection(BaseModel):
     evidence: int | None = None
 
 
+class PostureDetection(BaseModel):
+    track_id: str
+    box: list[float]
+    reba_score: float
+    ergonomic_score: float
+    state: str
+    severity: int = 0
+    confidence: float = 0
+    posture_mode: str | None = None
+    penalties: dict[str, float] = Field(default_factory=dict)
+
+
 class FrameResult(BaseModel):
     frame_id: str
     image_width: int
     image_height: int
     detections: list[FrameDetection]
     tracks: list[dict[str, Any]]
+    posture: list[PostureDetection] = Field(default_factory=list)
     machine_locked: bool
     inference_ms: float
     processing_ms: float
