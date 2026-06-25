@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
+from .camera_runtime import CameraRuntimeManager
 from .machine import ESP32Adapter, SimulationAdapter
 from .models import (
     Area,
@@ -51,7 +53,7 @@ POSTURE_MODEL_PATH = Path(os.getenv("POSTURE_MODEL_PATH", str(DEFAULT_POSTURE_MO
 if not POSTURE_MODEL_PATH.exists() and POSTURE_SOURCE_FALLBACK.exists():
     POSTURE_MODEL_PATH = POSTURE_SOURCE_FALLBACK
 POSTURE_ENABLED = os.getenv("POSTURE_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
-POSTURE_INTERVAL_SECONDS = float(os.getenv("POSTURE_INTERVAL_SECONDS", "1.0"))
+POSTURE_INTERVAL_SECONDS = float(os.getenv("POSTURE_INTERVAL_SECONDS", "0.1"))
 FRONTEND_DIST = BASE_DIR.parents[0] / "frontend" / "dist"
 
 store = JsonStore(STORE_PATH)
@@ -62,6 +64,7 @@ engine = MonitoringEngine(store, machine)
 reports = ReportService(store)
 vision = VisionService(MODEL_PATH)
 posture = PostureService(POSTURE_MODEL_PATH, enabled=POSTURE_ENABLED, interval_seconds=POSTURE_INTERVAL_SECONDS)
+camera_runtime = CameraRuntimeManager(store, engine, vision, posture)
 
 app = FastAPI(title="EPI Guard", version="0.1.0")
 app.add_middleware(
@@ -79,6 +82,11 @@ bearer = HTTPBearer()
 def startup() -> None:
     vision.load()
     posture.load()
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    camera_runtime.stop_all()
 
 
 def public_user(user: User) -> UserPublic:
@@ -295,6 +303,57 @@ def reset_machine(session_id: str, user: Annotated[User, Depends(current_user)])
     return machine.reset(session, user.id)
 
 
+
+@app.post("/api/sessions/{session_id}/camera/start")
+def start_camera(session_id: str, user: Annotated[User, Depends(current_user)]) -> dict:
+    session = get_session(session_id, user)
+    if session.status != SessionStatus.active:
+        raise HTTPException(status_code=409, detail="Sessao nao esta ativa")
+    try:
+        runtime = camera_runtime.start(session.id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"running": runtime.running, "error": runtime.error}
+
+
+@app.post("/api/sessions/{session_id}/camera/stop")
+def stop_camera(session_id: str, user: Annotated[User, Depends(current_user)]) -> dict:
+    session = get_session(session_id, user)
+    camera_runtime.stop(session.id)
+    return {"running": False}
+
+
+@app.get("/api/sessions/{session_id}/camera/state", response_model=FrameResult)
+def camera_state(session_id: str, user: Annotated[User, Depends(current_user)]) -> FrameResult:
+    session = get_session(session_id, user)
+    runtime = camera_runtime.get(session.id)
+    result = runtime.latest_result() if runtime else None
+    if not result:
+        raise HTTPException(status_code=404, detail="Aguardando primeiro frame da camera")
+    return result
+
+
+@app.get("/api/sessions/{session_id}/camera/stream")
+def camera_stream(session_id: str, token: str = Query(...)) -> StreamingResponse:
+    user_id = decode_token(token)
+    user = store.get("users", user_id, User) if user_id else None
+    session = store.get("sessions", session_id, MonitoringSession)
+    if not user or not session or session.status != SessionStatus.active:
+        raise HTTPException(status_code=401, detail="Sessao ou token invalido")
+    if user.role != UserRole.admin and session.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Sessao de outro usuario")
+    runtime = camera_runtime.get(session.id)
+    if not runtime or not runtime.running:
+        try:
+            runtime = camera_runtime.start(session.id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return StreamingResponse(
+        runtime.stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
 @app.get("/api/reports/{session_id}", response_model=QualityReport)
 def get_report(session_id: str, user: Annotated[User, Depends(current_user)]) -> QualityReport:
     session = get_session(session_id, user)
@@ -388,7 +447,7 @@ async def inference_ws(
                 )
                 session.posture_timeline = session.posture_timeline[-5000:]
             inference_ms = ppe_inference_ms + posture_inference_ms
-            tracks = engine.process(session, assignments)
+            tracks = engine.process(session, assignments, persist=False)
             processing_ms = (time.perf_counter() - processing_started) * 1000 - inference_ms
             server_total_ms = (time.time() * 1000) - received_at_ms
             session.latency_metrics.append(

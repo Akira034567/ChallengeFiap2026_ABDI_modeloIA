@@ -179,6 +179,7 @@ class PostureService:
         self.error: str | None = None
         self.cache: dict[str, CachedPosture] = {}
         self.running: dict[str, Future[CachedPosture]] = {}
+        self.submitted_at: dict[str, float] = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="posture")
 
     def load(self) -> None:
@@ -225,7 +226,8 @@ class PostureService:
         if not self.ready:
             return cached.items if cached else [], 0.0
 
-        due = cached is None or now - cached.created_at >= self.interval_seconds
+        last_submitted = self.submitted_at.get(session_id, 0.0)
+        due = cached is None or now - last_submitted >= self.interval_seconds
         if due and session_id not in self.running:
             person_detections = [
                 item.model_copy(deep=True)
@@ -233,12 +235,14 @@ class PostureService:
                 if normalize_class_name(item.class_name) == "person" and item.track_id
             ]
             if person_detections:
+                self.submitted_at[session_id] = now
                 self.running[session_id] = self.executor.submit(
                     self._infer_now,
                     frame.copy(),
                     person_detections,
                 )
             else:
+                self.submitted_at[session_id] = now
                 empty = CachedPosture(now, [], 0.0)
                 self.cache[session_id] = empty
                 return [], 0.0

@@ -125,3 +125,24 @@ def test_reset_compliance_accepts_recent_positive_ratio(tmp_path: Path):
 
     assert session.tracks["P1"].ppe["helmet"].ratio >= 0.6
     assert engine.all_tracks_compliant(session) is True
+
+
+def test_process_with_persist_false_updates_memory_without_session_write(tmp_path: Path):
+    store = JsonStore(tmp_path / "store.json")
+    engine = MonitoringEngine(store, SimulationAdapter(store))
+    session = MonitoringSession(
+        id="ses_no_persist",
+        user_id="usr_employee",
+        mode=SessionMode.group,
+        required_ppe=["helmet"],
+    )
+    store.upsert("sessions", session)
+    stored_before = store.get("sessions", "ses_no_persist", MonitoringSession)
+
+    engine.process(session, {"P1": [detection("helmet", 1)]}, persist=False)
+    stored_after = store.get("sessions", "ses_no_persist", MonitoringSession)
+
+    assert session.tracks
+    assert stored_before is not None
+    assert stored_after is not None
+    assert stored_after.tracks == stored_before.tracks

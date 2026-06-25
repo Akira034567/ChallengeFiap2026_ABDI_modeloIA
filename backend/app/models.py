@@ -297,5 +297,9 @@ class FrameResult(BaseModel):
     processing_ms: float
     server_total_ms: float
     server_sent_at_ms: float
+    source: str | None = None
+    frame_age_ms: float | None = None
+    camera_fps: float | None = None
+    processing_fps: float | None = None
 
 

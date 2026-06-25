@@ -59,6 +59,7 @@ type FrameResult = {
   posture?: PostureDetection[];
   machine_locked: boolean; inference_ms: number; processing_ms: number;
   server_total_ms: number; server_sent_at_ms: number;
+  source?: string | null; frame_age_ms?: number | null; camera_fps?: number | null; processing_fps?: number | null;
 };
 
 type Report = {
@@ -120,113 +121,6 @@ function percentile(values: number[], p: number) {
   return sorted[Math.min(sorted.length - 1, Math.round((sorted.length - 1) * p))];
 }
 
-
-type VisualPoseLandmark = { x: number; y: number; visibility?: number; presence?: number };
-type BrowserPoseState = {
-  landmarker: any | null;
-  loading: boolean;
-  ready: boolean;
-  error: string | null;
-};
-
-const MEDIAPIPE_TASKS_VERSION = "0.10.0";
-const VISUAL_POSE_CONNECTIONS: Array<[number, number]> = [
-  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
-  [11, 23], [12, 24], [23, 24], [23, 25], [25, 27],
-  [24, 26], [26, 28], [27, 29], [29, 31], [28, 30], [30, 32],
-];
-
-async function createBrowserPoseLandmarker() {
-  const moduleUrls = [
-    `https://cdn.skypack.dev/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
-    `https://esm.sh/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
-    `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}`,
-  ];
-  const wasmUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
-  const modelUrl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
-  let vision: any = null;
-  let lastError: unknown = null;
-  for (const moduleUrl of moduleUrls) {
-    try {
-      vision = await import(/* @vite-ignore */ moduleUrl);
-      break;
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  if (!vision) throw lastError instanceof Error ?lastError : new Error("MediaPipe module unavailable");
-  const fileset = await vision.FilesetResolver.forVisionTasks(wasmUrl);
-  const options = {
-    baseOptions: { modelAssetPath: modelUrl, delegate: "GPU" },
-    runningMode: "VIDEO",
-    numPoses: 4,
-    minPoseDetectionConfidence: 0.45,
-    minPosePresenceConfidence: 0.45,
-    minTrackingConfidence: 0.45,
-  };
-  try {
-    return await vision.PoseLandmarker.createFromOptions(fileset, options);
-  } catch {
-    return await vision.PoseLandmarker.createFromOptions(fileset, {
-      ...options,
-      baseOptions: { modelAssetPath: modelUrl, delegate: "CPU" },
-    });
-  }
-}
-
-function fitCanvasToVideo(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
-  const width = video.clientWidth;
-  const height = video.clientHeight;
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-}
-
-function drawBrowserPose(canvas: HTMLCanvasElement, landmarksByPose: VisualPoseLandmark[][]) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  landmarksByPose.forEach((landmarks, index) => {
-    const hue = [164, 197, 43, 280][index % 4];
-    const color = `hsl(${hue} 85% 58%)`;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.setLineDash([7, 5]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.6;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    VISUAL_POSE_CONNECTIONS.forEach(([a, b]) => {
-      const pa = landmarks[a];
-      const pb = landmarks[b];
-      const va = pa?.visibility ?? pa?.presence ?? 1;
-      const vb = pb?.visibility ?? pb?.presence ?? 1;
-      if (!pa || !pb || va < 0.35 || vb < 0.35) return;
-      ctx.beginPath();
-      ctx.moveTo(canvas.width - pa.x * canvas.width, pa.y * canvas.height);
-      ctx.lineTo(canvas.width - pb.x * canvas.width, pb.y * canvas.height);
-      ctx.stroke();
-    });
-    ctx.setLineDash([]);
-    landmarks.forEach((point) => {
-      const visible = point.visibility ?? point.presence ?? 1;
-      if (visible < 0.35) return;
-      const x = canvas.width - point.x * canvas.width;
-      const y = point.y * canvas.height;
-      ctx.beginPath();
-      ctx.fillStyle = "rgba(2, 8, 23, .72)";
-      ctx.arc(x, y, 4.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.fillStyle = color;
-      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.restore();
-  });
-}
 
 function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds.toFixed(0)}s`;
@@ -620,45 +514,23 @@ function StartSession({
 function Monitor({
   token, session, ppe, onEnd, onReset, onSessionUpdate,
 }: { token: string; session: Session; ppe: PPE[]; onEnd: () => Promise<void>; onReset: () => Promise<void>; onSessionUpdate: (s: Session) => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
-  const poseOverlayRef = useRef<HTMLCanvasElement>(null);
-  const captureRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
-  const wsRef = useRef<WebSocket | null>(null);
-  const inFlight = useRef(false);
-  const frames = useRef(new Map<string, number>());
-  const visualPoseRef = useRef<BrowserPoseState>({ landmarker: null, loading: false, ready: false, error: null });
-  const visualPoseLoopRef = useRef<number | undefined>(undefined);
+  const intervalRef = useRef<number | undefined>(undefined);
+  const lastSessionRefresh = useRef(0);
+  const stoppingRef = useRef(false);
+  const [streamUrl, setStreamUrl] = useState("");
   const [result, setResult] = useState<FrameResult | null>(null);
   const [latencies, setLatencies] = useState<number[]>([]);
-  const [status, setStatus] = useState("Inicializando câmera...");
-  const [visualPoseStatus, setVisualPoseStatus] = useState("Tracker visual: carregando MediaPipe");
+  const [status, setStatus] = useState("Inicializando camera local...");
   const [ending, setEnding] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
-  const intervalRef = useRef<number | undefined>(undefined);
-  const streamRef = useRef<MediaStream | undefined>(undefined);
-  const stoppingRef = useRef(false);
   const ppeName = useMemo(() => Object.fromEntries(ppe.map((p) => [p.code, p.name])), [ppe]);
 
-  function stopMonitoring(finalStatus = "Sessão encerrada") {
+  function stopMonitoring(finalStatus = "Sessao encerrada") {
     stoppingRef.current = true;
-    inFlight.current = false;
     if (intervalRef.current) window.clearInterval(intervalRef.current);
     intervalRef.current = undefined;
-    wsRef.current?.close(); wsRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = undefined;
-    const video = videoRef.current;
-    if (video) { video.pause(); video.srcObject = null; }
-    const canvas = overlayRef.current;
-    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
-    const poseCanvas = poseOverlayRef.current;
-    poseCanvas?.getContext("2d")?.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
-    if (visualPoseLoopRef.current) window.cancelAnimationFrame(visualPoseLoopRef.current);
-    visualPoseLoopRef.current = undefined;
-    visualPoseRef.current.landmarker?.close?.();
-    visualPoseRef.current = { landmarker: null, loading: false, ready: false, error: null };
-    setVisualPoseStatus("Tracker visual: parado");
+    setStreamUrl("");
+    void api(`/api/sessions/${session.id}/camera/stop`, token, { method: "POST", body: "{}" }).catch(() => undefined);
     setStatus(finalStatus);
   }
 
@@ -666,137 +538,49 @@ function Monitor({
     if (ending) return;
     setEnding(true);
     setConfirmEnd(false);
-    stopMonitoring("Encerrando sessão...");
+    stopMonitoring("Encerrando sessao...");
     try { await onEnd(); } finally { setEnding(false); }
   }
 
   useEffect(() => {
-    async function ensureVisualPoseLandmarker() {
-      const state = visualPoseRef.current;
-      if (state.ready || state.loading) return;
-      state.loading = true;
-      state.error = null;
-      setVisualPoseStatus("Tracker visual: carregando MediaPipe");
+    let cancelled = false;
+    stoppingRef.current = false;
+
+    async function refreshState() {
+      if (cancelled || stoppingRef.current) return;
       try {
-        state.landmarker = await createBrowserPoseLandmarker();
-        state.ready = true;
-        setVisualPoseStatus("Tracker visual: MediaPipe ativo");
+        const parsed = await api<FrameResult>(`/api/sessions/${session.id}/camera/state`, token);
+        if (cancelled || stoppingRef.current) return;
+        setResult(parsed);
+        setStatus(`Monitorando - ${parsed.detections?.length ?? 0} deteccoes - ${parsed.tracks?.length ?? 0} tracks - ${parsed.posture?.length ?? 0} posturas`);
+        setLatencies((items) => [...items.slice(-59), parsed.server_total_ms]);
+        const now = performance.now();
+        if (now - lastSessionRefresh.current > 2000) {
+          lastSessionRefresh.current = now;
+          api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
+        }
       } catch (err) {
-        state.error = err instanceof Error ?err.message : "Visual pose tracker unavailable";
-        state.ready = false;
-        setVisualPoseStatus("Tracker visual indisponível: usando apenas métricas do backend");
-      } finally {
-        state.loading = false;
+        if (!cancelled && !stoppingRef.current && result) {
+          setStatus("Reconectando ao estado da camera...");
+        }
       }
     }
 
-    function startVisualPoseLoop() {
-      if (visualPoseLoopRef.current) return;
-      void ensureVisualPoseLandmarker();
-      let lastVideoTime = -1;
-      const tick = () => {
-        const canvas = poseOverlayRef.current;
-        const video = videoRef.current;
-        if (stoppingRef.current || !canvas || !video) {
-          visualPoseLoopRef.current = undefined;
-          return;
-        }
-        fitCanvasToVideo(canvas, video);
-        const ctx = canvas.getContext("2d");
-        const landmarker = visualPoseRef.current.landmarker;
-        if (landmarker && video.readyState >= 2 && video.videoWidth > 0 && video.currentTime !== lastVideoTime) {
-          try {
-            const poses = landmarker.detectForVideo(video, performance.now());
-            drawBrowserPose(canvas, poses.landmarks ?? []);
-            lastVideoTime = video.currentTime;
-          } catch {
-            ctx?.clearRect(0, 0, canvas.width, canvas.height);
-          }
-        } else if (!landmarker) {
-          ctx?.clearRect(0, 0, canvas.width, canvas.height);
-        }
-        visualPoseLoopRef.current = window.requestAnimationFrame(tick);
-      };
-      visualPoseLoopRef.current = window.requestAnimationFrame(tick);
+    async function start() {
+      setStatus("Abrindo camera local no backend...");
+      await api(`/api/sessions/${session.id}/camera/start`, token, { method: "POST", body: "{}" });
+      if (cancelled) return;
+      setStreamUrl(`${API_BASE}/api/sessions/${session.id}/camera/stream?token=${encodeURIComponent(token)}&v=${Date.now()}`);
+      setStatus("Monitorando em tempo real");
+      await refreshState();
+      intervalRef.current = window.setInterval(refreshState, 300);
     }
 
-    async function start() {
-      stoppingRef.current = false;
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
-      startVisualPoseLoop();
-      const socket = new WebSocket(`${wsBase()}/api/ws/inference?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(session.id)}`);
-      wsRef.current = socket;
-      socket.onopen = () => setStatus("Monitorando em tempo real");
-      socket.onerror = () => setStatus("Falha no WebSocket");
-      socket.onclose = () => { if (!stoppingRef.current) setStatus("WebSocket desconectado"); };
-      socket.onmessage = (msg) => {
-        if (stoppingRef.current) return;
-        inFlight.current = false;
-        const parsed = JSON.parse(msg.data);
-        if (parsed.error) { setStatus(parsed.error); return; }
-        const sent = frames.current.get(parsed.frame_id);
-        const e2e = sent ?performance.now() - sent : parsed.server_total_ms;
-        frames.current.delete(parsed.frame_id);
-        setResult(parsed);
-        setStatus(`Monitorando · ${parsed.detections?.length ?? 0} detecções · ${parsed.tracks?.length ?? 0} tracks · ${parsed.posture?.length ?? 0} posturas`);
-        setLatencies((items) => [...items.slice(-59), e2e]);
-        drawOverlay(parsed);
-        if (!stoppingRef.current)
-          api<Session>(`/api/sessions/${session.id}`, token).then(onSessionUpdate).catch(() => undefined);
-      };
-      const interval = window.setInterval(() => {
-        const video = videoRef.current;
-        if (!video || socket.readyState !== WebSocket.OPEN || inFlight.current || video.videoWidth === 0) return;
-        const capture = captureRef.current;
-        const captureWidth = 512;
-        const scale = captureWidth / video.videoWidth;
-        capture.width = captureWidth; capture.height = Math.round(video.videoHeight * scale);
-        capture.getContext("2d")?.drawImage(video, 0, 0, capture.width, capture.height);
-        const frameId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        frames.current.set(frameId, performance.now());
-        inFlight.current = true;
-        socket.send(JSON.stringify({ frame_id: frameId, captured_at_ms: Date.now(), image: capture.toDataURL("image/jpeg", 0.62) }));
-      }, 250);
-      intervalRef.current = interval;
-    }
-    function drawOverlay(next: FrameResult) {
-      const canvas = overlayRef.current; const video = videoRef.current;
-      if (!canvas || !video) return;
-      canvas.width = video.clientWidth; canvas.height = video.clientHeight;
-      const ctx = canvas.getContext("2d"); if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const sx = canvas.width / next.image_width; const sy = canvas.height / next.image_height;
-      next.detections.forEach((det) => {
-        const [x1, y1, x2, y2] = det.box;
-        const isPerson = det.class_name.toLowerCase() === "person";
-        ctx.strokeStyle = isPerson ?"#38bdf8" : det.evidence === -1 ?"#ef4444" : "#22c55e";
-        ctx.lineWidth = isPerson ?3 : 2;
-        const drawX = canvas.width - x2 * sx;
-        ctx.strokeRect(drawX, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.font = "13px Inter, sans-serif";
-        ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
-      });
-      (next.posture ?? []).forEach((posture) => {
-        const [x1, y1, x2] = posture.box;
-        const drawX = canvas.width - x2 * sx;
-        const drawY = Math.max(22, y1 * sy - 8);
-        const color = posture.severity >= 2 ?"#ef4444" : posture.severity === 1 ?"#f59e0b" : "#a78bfa";
-        // Camera skeleton is drawn only by the browser-side lightweight tracker.
-        // Backend posture data remains the source for metrics, cards and reports.
-        const label = `Postura ${posture.track_id}: ${posture.state.toUpperCase()} - REBA ${posture.reba_score.toFixed(0)} - ${posture.ergonomic_score.toFixed(0)}/100`;
-        ctx.font = "700 13px Inter, sans-serif";
-        const width = ctx.measureText(label).width + 12;
-        ctx.fillStyle = "rgba(2, 8, 23, .78)";
-        ctx.fillRect(drawX, drawY - 15, width, 20);
-        ctx.fillStyle = color;
-        ctx.fillText(label, drawX + 6, drawY);
-      });
-    }
-    start().catch((err) => setStatus(err instanceof Error ?err.message : "Falha ao iniciar câmera"));
-    return () => { stopMonitoring("Sessão encerrada"); };
+    start().catch((err) => setStatus(err instanceof Error ?err.message : "Falha ao iniciar camera local"));
+    return () => {
+      cancelled = true;
+      stopMonitoring("Sessao encerrada");
+    };
   }, [session.id, token]);
 
   const averageLatency = latencies.length ?latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
@@ -816,35 +600,36 @@ function Monitor({
     items.findIndex((item) => item.track_id === track.track_id) === index
   );
   const hasResetTracks = resetTracks.length > 0;
-  const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
+  const machineLocked = result?.machine_locked ?? session.machine_locked;
+  const resetReady = machineLocked && hasResetTracks && resetTracks.every((track) =>
     session.required_ppe.every((code) => {
       const item = track.ppe[code];
       return item?.state === "present" || (item?.ratio ?? 0) >= 0.6;
     })
   );
   const resetHint = !hasResetTracks
-    ?"Aguardando a câmera reconhecer a pessoa e os EPIs obrigatórios."
+    ?"Aguardando a camera reconhecer a pessoa e os EPIs obrigatorios."
     : resetReady
-      ?"Todos os EPIs obrigatórios estão conformes. Reset liberado."
-      : "Reset bloqueado: todos os EPIs obrigatórios precisam estar visíveis e conformes.";
+      ?"Todos os EPIs obrigatorios estao conformes. Reset liberado."
+      : "Reset bloqueado: todos os EPIs obrigatorios precisam estar visiveis e conformes.";
 
   return (
     <div>
       {/* Header with controls always visible */}
       <div className="monitor-header">
         <div className="monitor-title">
-          <h1>Sessão {session.mode === "individual" ?"individual" : "em grupo"}</h1>
+          <h1>Sessao {session.mode === "individual" ?"individual" : "em grupo"}</h1>
           <div className="monitor-status">
             <span className={`dot ${isLive ?"dot-blue" : "dot-amber"}`} />
             {status}
           </div>
         </div>
         <div className="monitor-controls">
-          <div className={`machine-status ${session.machine_locked ?"danger" : "ok"}`}>
-            {session.machine_locked ?<IcLock size={13} /> : <IcUnlock size={13} />}
-            {session.machine_locked ?"CORTE SIMULADO" : "Máquina liberada"}
+          <div className={`machine-status ${machineLocked ?"danger" : "ok"}`}>
+            {machineLocked ?<IcLock size={13} /> : <IcUnlock size={13} />}
+            {machineLocked ?"CORTE SIMULADO" : "Maquina liberada"}
           </div>
-          {session.machine_locked && (
+          {machineLocked && (
             <div className="reset-control">
               <button className="btn-sm" onClick={onReset} disabled={!resetReady} title={resetHint}>
                 <IcRefresh size={13} /> Resetar
@@ -854,11 +639,11 @@ function Monitor({
           )}
           {!confirmEnd ?(
             <button className="btn-danger btn-sm" onClick={() => setConfirmEnd(true)}>
-              <IcStop size={13} /> Encerrar sessão
+              <IcStop size={13} /> Encerrar sessao
             </button>
           ) : (
             <div className="confirm-end">
-              <span>Encerrar sessão?</span>
+              <span>Encerrar sessao?</span>
               <button className="btn-danger btn-sm" onClick={handleEndSession} disabled={ending}>
                 {ending ?"Encerrando..." : "Confirmar"}
               </button>
@@ -870,114 +655,64 @@ function Monitor({
 
       {/* Video */}
       <div className="video-wrap">
-        <video ref={videoRef} muted playsInline />
-        <canvas ref={overlayRef} />
-        <canvas ref={poseOverlayRef} className="pose-overlay" />
-        <div className={`visual-pose-badge ${visualPoseRef.current.ready ?"ok" : "warn"}`}>{visualPoseStatus}</div>
+        {streamUrl ?(
+          <img className="camera-stream" src={streamUrl} alt="Monitoramento da camera local" />
+        ) : (
+          <div className="camera-placeholder">Aguardando stream da camera local...</div>
+        )}
       </div>
 
       {/* Metrics */}
       <div className="metrics">
-        <div className="metric-card">
-          <div className="metric-value">{result?.inference_ms.toFixed(0) ?? 0} ms</div>
-          <div className="metric-label">Inferência</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{averageLatency.toFixed(0)} ms</div>
-          <div className="metric-label">E2E média</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{percentile(latencies, 0.5).toFixed(0)} ms</div>
-          <div className="metric-label">p50</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{percentile(latencies, 0.95).toFixed(0)} ms</div>
-          <div className="metric-label">p95</div>
-        </div>
+        <div className="metric-card"><div className="metric-value">{result?.detections.length ?? 0}</div><div className="metric-label">Deteccoes</div></div>
+        <div className="metric-card"><div className="metric-value">{result?.tracks.length ?? 0}</div><div className="metric-label">Pessoas</div></div>
+        <div className="metric-card"><div className="metric-value">{averageLatency.toFixed(0)} ms</div><div className="metric-label">Latencia media</div></div>
+        <div className="metric-card"><div className="metric-value">{(result?.processing_fps ?? 0).toFixed(1)}</div><div className="metric-label">FPS IA</div></div>
       </div>
 
-      {/* Track Cards */}
       <div className="track-grid">
-        {displayTracks.map((track) => {
-          const trackBlocked = session.required_ppe.some((code) => {
-            const item = track.ppe[code];
-            return item && item.state !== "present" && (item.severity ?? 0) >= 3;
-          });
-          const trackAlert = session.required_ppe.some((code) => {
-            const item = track.ppe[code];
-            return !item || item.state !== "present";
-          });
-          const displayCompliant = track.compliant && !trackAlert;
-          return (
-          <div key={track.track_id} className={`track-card ${displayCompliant ?"ok" : "alert"}`}>
-            <div className="track-card-header">
-              <span className="track-id">Track {track.track_id}</span>
-              <span className={`badge ${displayCompliant ?"badge-green" : "badge-red"}`}>
-                <span className={`dot ${displayCompliant ?"dot-green" : "dot-red"}`} />
-                {displayCompliant ?"Conforme" : trackBlocked ?"Bloqueado" : "Alerta"}
-              </span>
-            </div>
-            {postureForTrack(track.track_id) ? (() => {
-              const posture = postureForTrack(track.track_id)!;
-              const regionScores = postureRegionScores(posture.penalties);
-              return (
-                <div className={`track-posture ${posture.state ?? ""}`}>
-                  <div className="track-posture-head">
-                    <span>Postura ergonômica</span>
-                    <strong>
-                      {postureStateLabel(posture.state)}
-                      {" · REBA "}{posture.reba_score.toFixed(0)}
-                      {" · "}{posture.ergonomic_score.toFixed(0)}/100
-                    </strong>
-                  </div>
-                  <div className="track-posture-advice">
-                    {posture.advice?.[0] ?? "Mantenha a postura estável por alguns segundos para uma leitura melhor."}
-                  </div>
-                  {regionScores.length > 0 && (
-                    <div className="posture-penalty-list">
-                      {regionScores.map(([key, value]) => (
-                        <div className="posture-penalty" key={key}>
-                          <span>{POSTURE_PENALTY_LABELS[key] ?? key}</span>
-                          <div><i style={{ width: `${Math.max(4, Math.min(100, value))}%` }} /></div>
-                          <strong>{value.toFixed(0)}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })() : (
-              <div className="track-posture pending">
-                <div className="track-posture-head">
-                  <span>Postura ergonômica</span>
-                  <strong>Aguardando leitura</strong>
-                </div>
-                <div className="track-posture-advice">
-                  Fique com o corpo inteiro visível na câmera por alguns segundos.
-                </div>
-              </div>
-            )}
-            <div className="track-ppe-list">
-              {session.required_ppe.map((code) => {
-                const item = track.ppe[code];
-                const state = item?.state ?? "unknown";
-                const severity = item?.severity ?? 0;
-                const statusText = state === "present"
-                  ?`✓ Nível ${severity}`
-                  : trackBlocked && severity >= 3
-                    ?"Bloqueio pendente"
-                    : `${state === "absent" ?"✕" : "?"} Nível ${severity}`;
-                return (
-                  <div key={code} className="track-ppe-item">
-                    <span className="track-ppe-name">{ppeName[code] ?? code}</span>
-                    <span className={`track-ppe-status ${state}`}>
-                      {statusText}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+        {displayTracks.length === 0 ?(
+          <div className="empty-state wide">
+            <div className="empty-icon-wrap"><IcShield size={28} /></div>
+            <p>Aguardando a deteccao da pessoa e dos EPIs obrigatorios.</p>
           </div>
+        ) : displayTracks.map((track) => {
+          const posture = postureForTrack(track.track_id);
+          return (
+            <div className="track-card" key={track.track_id}>
+              <div className="track-card-head">
+                <h3>{track.track_id}</h3>
+                <span className={`badge ${track.compliant ?"badge-green" : "badge-red"}`}>
+                  {track.compliant ?"Conforme" : "Pendente"}
+                </span>
+              </div>
+              <div className="ppe-status-list">
+                {session.required_ppe.map((code) => {
+                  const item = track.ppe[code];
+                  const present = item?.state === "present";
+                  return (
+                    <div className={`ppe-status ${present ?"present" : "absent"}`} key={code}>
+                      <span>{ppeName[code] ?? code}</span>
+                      <strong>{present ?"OK" : item?.severity ?`Nivel ${item.severity}` : "Ausente"}</strong>
+                    </div>
+                  );
+                })}
+              </div>
+              {posture && (
+                <div className={`posture-card severity-${posture.severity}`}>
+                  <div className="posture-card-top">
+                    <span>Postura ergonomica</span>
+                    <strong>{postureStateLabel(posture.state)}</strong>
+                  </div>
+                  <div className="posture-values">
+                    <span>REBA {posture.reba_score.toFixed(0)}</span>
+                    <span>Score {posture.ergonomic_score.toFixed(0)}/100</span>
+                    <span>{posture.posture_mode ?? "N/A"}</span>
+                  </div>
+                  <div className="posture-advice">{posture.advice?.[0]}</div>
+                </div>
+              )}
+            </div>
           );
         })}
       </div>

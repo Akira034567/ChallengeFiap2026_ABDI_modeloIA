@@ -70,6 +70,7 @@ class MonitoringEngine:
         session: MonitoringSession,
         track_assignments: dict[str, list[FrameDetection]],
         timestamp: datetime | None = None,
+        persist: bool = True,
     ) -> list[dict]:
         timestamp = timestamp or now_utc()
         ppe_by_code = {item.code: item for item in self.store.list("ppe", PPE)}
@@ -168,7 +169,8 @@ class MonitoringEngine:
             )
 
         session.active_track_ids = current_track_ids
-        self.store.upsert("sessions", session)
+        if persist:
+            self.store.upsert("sessions", session)
         return output
 
     def _severity(self, duration: float) -> int:

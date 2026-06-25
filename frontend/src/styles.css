@@ -278,10 +278,15 @@ input::placeholder { color: var(--tx-muted); }
   position: relative; overflow: hidden; border-radius: var(--r-xl);
   border: 1px solid var(--bd-default); background: #010407; margin-bottom: 1rem;
 }
-.video-wrap video, .video-wrap canvas { width: 100%; display: block; }
+.video-wrap video, .video-wrap img, .video-wrap canvas { width: 100%; display: block; }
 .video-wrap video { transform: scaleX(-1); }
+.video-wrap .camera-stream { aspect-ratio: 16 / 9; object-fit: cover; background: #010407; }
 .video-wrap canvas { position: absolute; inset: 0; height: 100%; z-index: 1; pointer-events: none; }
 .video-wrap .pose-overlay { z-index: 2; }
+.camera-placeholder {
+  min-height: clamp(260px, 55vw, 620px); display: grid; place-items: center;
+  color: var(--tx-secondary); font-weight: 700; background: #010407;
+}
 
 /* ─── Metrics ─── */
 .metrics {
@@ -306,6 +311,18 @@ input::placeholder { color: var(--tx-muted); }
 .track-card.ok    { background: rgba(16,185,129,.07); border-color: rgba(16,185,129,.28); }
 .track-card.alert { background: rgba(239,68,68,.07);  border-color: rgba(239,68,68,.28); }
 .track-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .65rem; }
+.track-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .65rem; }
+.track-card-head h3 { margin: 0; font-size: .98rem; }
+.ppe-status-list { display: grid; gap: .5rem; }
+.ppe-status { display: flex; align-items: center; justify-content: space-between; padding: .5rem .6rem; border-radius: var(--r-md); border: 1px solid var(--bd-subtle); background: rgba(15,23,42,.55); font-size: .82rem; }
+.ppe-status.present strong { color: #34d399; }
+.ppe-status.absent strong { color: #f87171; }
+.posture-card { margin-top: .65rem; padding: .65rem .7rem; border-radius: var(--r-md); border: 1px solid rgba(167,139,250,.24); background: rgba(167,139,250,.09); font-size: .78rem; }
+.posture-card.severity-1 { border-color: rgba(245,158,11,.36); background: rgba(245,158,11,.09); }
+.posture-card.severity-2 { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.09); }
+.posture-card-top, .posture-values { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem; }
+.posture-card-top { margin-bottom: .45rem; }
+.posture-advice { margin-top: .45rem; color: var(--tx-secondary); line-height: 1.35; }
 .track-id { font-weight: 700; font-size: .92rem; }
 .track-posture { display: grid; gap: .55rem; margin-bottom: .65rem; padding: .65rem .7rem; border-radius: var(--r-md); font-size: .78rem; border: 1px solid rgba(167,139,250,.24); background: rgba(167,139,250,.09); }
 .track-posture-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
