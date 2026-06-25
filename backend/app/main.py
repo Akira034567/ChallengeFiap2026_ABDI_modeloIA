@@ -364,6 +364,9 @@ async def inference_ws(
             ppe_items = [ppe for ppe in store.list("ppe", PPE) if ppe.code in session.required_ppe]
             detections, assignments, ppe_inference_ms = vision.infer(session.id, frame, ppe_items)
             posture_items, posture_inference_ms = posture.infer(session.id, frame, detections)
+            if session.mode.value == "individual":
+                for item in posture_items:
+                    item.track_id = "employee"
             if posture_items and posture_inference_ms > 0:
                 captured_at = datetime.now(timezone.utc)
                 session.posture_timeline.extend(
@@ -375,6 +378,11 @@ async def inference_ws(
                         reba_score=item.reba_score,
                         ergonomic_score=item.ergonomic_score,
                         confidence=item.confidence,
+                        posture_mode=item.posture_mode,
+                        penalties=item.penalties,
+                        advice=item.advice,
+                        keypoints_3d=item.keypoints_3d,
+                        keypoints_2d=item.keypoints_2d,
                     )
                     for item in posture_items
                 )

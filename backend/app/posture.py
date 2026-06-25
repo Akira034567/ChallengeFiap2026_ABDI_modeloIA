@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import os
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,7 @@ J = {
 class CachedPosture:
     created_at: float
     items: list[PostureDetection]
+    inference_ms: float = 0.0
 
 
 def _angle_between(a: np.ndarray, b: np.ndarray) -> float:
@@ -128,6 +130,37 @@ def ergonomic_score(coords: np.ndarray) -> tuple[float, dict[str, float | str]]:
     }
 
 
+def posture_advice(penalties: dict[str, float | str]) -> list[str]:
+    labels = {
+        "trunk": "Reduza a inclinacao do tronco e aproxime o corpo da tarefa.",
+        "neck": "Mantenha o pescoco mais neutro; eleve ou aproxime o ponto de foco.",
+        "shoulders": "Alinhe melhor os ombros e evite torcao lateral.",
+        "hips": "Distribua o peso entre os dois lados do corpo e alinhe o quadril.",
+        "raised_shoulders": "Evite manter os bracos elevados; ajuste a altura da tarefa.",
+    }
+    numeric = [
+        (key, float(value))
+        for key, value in penalties.items()
+        if key in labels and isinstance(value, (int, float)) and float(value) >= 18.0
+    ]
+    numeric.sort(key=lambda item: item[1], reverse=True)
+    return [labels[key] for key, _ in numeric[:3]] or ["Postura dentro da faixa esperada; mantenha estabilidade e movimentos suaves."]
+
+
+def compact_keypoints(joints: np.ndarray) -> list[list[float]]:
+    selected = joints[:18].astype(float)
+    return [[round(float(value), 4) for value in point] for point in selected]
+
+
+def compact_keypoints_2d(joints: np.ndarray, scores: np.ndarray) -> list[list[float]]:
+    selected = joints[:18].astype(float)
+    selected_scores = scores[:18].reshape(-1)
+    return [
+        [round(float(point[0]), 2), round(float(point[1]), 2), round(float(score), 3)]
+        for point, score in zip(selected, selected_scores)
+    ]
+
+
 def classify_posture(reba_score: float, score: float) -> tuple[str, int]:
     if reba_score >= 7 or score < 55:
         return "inapto", 2
@@ -145,6 +178,8 @@ class PostureService:
         self.device = None
         self.error: str | None = None
         self.cache: dict[str, CachedPosture] = {}
+        self.running: dict[str, Future[CachedPosture]] = {}
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="posture")
 
     def load(self) -> None:
         if not self.enabled:
@@ -182,23 +217,60 @@ class PostureService:
         detections: list[FrameDetection],
     ) -> tuple[list[PostureDetection], float]:
         now = time.time()
+        completed = self._collect_completed(session_id)
         cached = self.cache.get(session_id)
-        if cached and now - cached.created_at < self.interval_seconds:
-            return cached.items, 0.0
-        if not self.ready:
-            return [], 0.0
+        if completed:
+            cached = completed
 
-        person_detections = [
-            item for item in detections
-            if normalize_class_name(item.class_name) == "person" and item.track_id
-        ]
-        if not person_detections:
-            self.cache[session_id] = CachedPosture(now, [])
-            return [], 0.0
+        if not self.ready:
+            return cached.items if cached else [], 0.0
+
+        due = cached is None or now - cached.created_at >= self.interval_seconds
+        if due and session_id not in self.running:
+            person_detections = [
+                item.model_copy(deep=True)
+                for item in detections
+                if normalize_class_name(item.class_name) == "person" and item.track_id
+            ]
+            if person_detections:
+                self.running[session_id] = self.executor.submit(
+                    self._infer_now,
+                    frame.copy(),
+                    person_detections,
+                )
+            else:
+                empty = CachedPosture(now, [], 0.0)
+                self.cache[session_id] = empty
+                return [], 0.0
+
+        if completed:
+            return completed.items, completed.inference_ms
+        return cached.items if cached else [], 0.0
+
+    def _collect_completed(self, session_id: str) -> CachedPosture | None:
+        future = self.running.get(session_id)
+        if not future or not future.done():
+            return None
+        self.running.pop(session_id, None)
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.error = str(exc)
+            return None
+        self.cache[session_id] = result
+        return result
+
+    def _infer_now(
+        self,
+        frame: np.ndarray,
+        person_detections: list[FrameDetection],
+    ) -> CachedPosture:
+        if not self.ready or not person_detections:
+            return CachedPosture(time.time(), [], 0.0)
 
         import torch
         from .posture_mp3d.utils.REBA import REBA
-        from .posture_mp3d.utils.transform import ProcessBox
+        from .posture_mp3d.utils.transform import ProcessBox, pre2coord
 
         started = time.perf_counter()
         img_batch = []
@@ -215,7 +287,7 @@ class PostureService:
             meta.append((person, bbox))
 
         if not img_batch:
-            return [], 0.0
+            return CachedPosture(time.time(), [], 0.0)
 
         with torch.no_grad():
             output = self.model(torch.stack(img_batch).to(self.device), torch.stack(k_batch).to(self.device))
@@ -228,9 +300,12 @@ class PostureService:
             if confidence < MIN_KEYPOINT_CONFIDENCE:
                 continue
             joints = joints_batch[index]
+            _, bbox = meta[index]
+            joints_2d = pre2coord(joints, INPUT_SIZE, bbox, output_3d=True)
             _, reba_score = REBA(joints)
             ergo_score, penalties = ergonomic_score(joints)
             state, severity = classify_posture(float(reba_score), ergo_score)
+            numeric_penalties = {key: value for key, value in penalties.items() if isinstance(value, (int, float))}
             items.append(
                 PostureDetection(
                     track_id=str(person.track_id),
@@ -241,9 +316,11 @@ class PostureService:
                     severity=severity,
                     confidence=round(confidence, 3),
                     posture_mode=str(penalties.get("posture_mode", "N/A")),
-                    penalties={key: value for key, value in penalties.items() if isinstance(value, (int, float))},
+                    penalties=numeric_penalties,
+                    advice=posture_advice(penalties),
+                    keypoints_3d=compact_keypoints(joints),
+                    keypoints_2d=compact_keypoints_2d(joints_2d, confidence_batch[index]),
                 )
             )
         inference_ms = (time.perf_counter() - started) * 1000
-        self.cache[session_id] = CachedPosture(now, items)
-        return items, inference_ms
+        return CachedPosture(time.time(), items, inference_ms)

@@ -166,6 +166,11 @@ class PostureSnapshot(BaseModel):
     reba_score: float = 0
     ergonomic_score: float = 0
     confidence: float = 0
+    posture_mode: str | None = None
+    penalties: dict[str, float] = Field(default_factory=dict)
+    advice: list[str] = Field(default_factory=list)
+    keypoints_3d: list[list[float]] = Field(default_factory=list)
+    keypoints_2d: list[list[float]] = Field(default_factory=list)
 
 
 class MonitoringSession(BaseModel):
@@ -275,6 +280,9 @@ class PostureDetection(BaseModel):
     confidence: float = 0
     posture_mode: str | None = None
     penalties: dict[str, float] = Field(default_factory=dict)
+    advice: list[str] = Field(default_factory=list)
+    keypoints_3d: list[list[float]] = Field(default_factory=list)
+    keypoints_2d: list[list[float]] = Field(default_factory=list)
 
 
 class FrameResult(BaseModel):

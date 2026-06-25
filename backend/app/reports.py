@@ -5,7 +5,7 @@ from statistics import mean
 
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
-from reportlab.graphics.shapes import Drawing, Rect, String
+from reportlab.graphics.shapes import Circle, Drawing, Line, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -111,6 +111,10 @@ class ReportService:
             Spacer(1, 12),
             self._track_chart(report),
             Spacer(1, 12),
+            self._posture_summary_chart(report),
+            Spacer(1, 12),
+            self._posture_pose_gallery(report),
+            Spacer(1, 12),
             self._timeline_chart(report),
             Spacer(1, 18),
             Paragraph("Pessoas monitoradas", styles["Heading2"]),
@@ -134,6 +138,99 @@ class ReportService:
         doc.build(story)
         return buffer.getvalue()
 
+
+    def _posture_summary_chart(self, report: QualityReport) -> Drawing:
+        samples = report.posture_timeline
+        drawing = Drawing(460, 165)
+        drawing.add(String(0, 148, "Postura ergonomica", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        drawing.add(String(0, 132, "Media de REBA e score ergonomico por pessoa/track", fontSize=8, fillColor=colors.HexColor("#475569")))
+        if not samples:
+            drawing.add(String(0, 92, "Sem amostras de postura registradas nesta sessao.", fontSize=9, fillColor=colors.HexColor("#64748B")))
+            return drawing
+
+        track_ids = []
+        for item in samples:
+            if item.track_id not in track_ids:
+                track_ids.append(item.track_id)
+        y = 104
+        for track_id in track_ids[:5]:
+            items = [item for item in samples if item.track_id == track_id]
+            avg_reba = sum(item.reba_score for item in items) / len(items)
+            avg_score = sum(item.ergonomic_score for item in items) / len(items)
+            worst = max(item.severity for item in items)
+            label = "Inapto" if worst >= 2 else "Atencao" if worst == 1 else "Apto"
+            color = colors.HexColor("#EF4444") if worst >= 2 else colors.HexColor("#F59E0B") if worst == 1 else colors.HexColor("#22C55E")
+            drawing.add(String(0, y, track_id, fontSize=8, fillColor=colors.HexColor("#0F172A")))
+            drawing.add(String(72, y, label, fontSize=8, fillColor=color))
+            drawing.add(String(145, y, f"REBA medio: {avg_reba:.1f}", fontSize=8, fillColor=colors.HexColor("#475569")))
+            drawing.add(String(260, y, f"Score: {avg_score:.1f}/100", fontSize=8, fillColor=colors.HexColor("#475569")))
+            drawing.add(Rect(360, y - 1, max(2, min(90, avg_score * 0.9)), 6, fillColor=color, strokeColor=None))
+            y -= 22
+        return drawing
+
+    def _posture_pose_gallery(self, report: QualityReport) -> Drawing:
+        drawing = Drawing(460, 250)
+        drawing.add(String(0, 232, "Amostras visuais de postura 3D", fontSize=11, fillColor=colors.HexColor("#14324A")))
+        drawing.add(String(0, 216, "Esqueletos gerados em memoria a partir dos keypoints; nenhuma foto da camera e salva.", fontSize=8, fillColor=colors.HexColor("#475569")))
+        samples = [item for item in report.posture_timeline if item.keypoints_3d]
+        if not samples:
+            drawing.add(String(0, 145, "Sem keypoints suficientes para renderizar amostras de postura.", fontSize=9, fillColor=colors.HexColor("#64748B")))
+            return drawing
+
+        selected = []
+        for track_id in []:
+            pass
+        track_ids = []
+        for item in samples:
+            if item.track_id not in track_ids:
+                track_ids.append(item.track_id)
+        for track_id in track_ids:
+            track_samples = [item for item in samples if item.track_id == track_id]
+            worst = max(track_samples, key=lambda item: (item.severity, item.reba_score, -item.ergonomic_score))
+            latest = track_samples[-1]
+            selected.append(worst)
+            if latest is not worst:
+                selected.append(latest)
+        selected = selected[:4]
+
+        skeleton = ((1, 0), (2, 1), (3, 2), (4, 0), (5, 4), (6, 5), (7, 0), (17, 7), (9, 8), (10, 9), (11, 8), (12, 11), (13, 12), (14, 8), (15, 14), (16, 15), (17, 8))
+
+        def draw_pose(item, x0: float, y0: float, w: float, h: float) -> None:
+            pts = item.keypoints_3d[:18]
+            xs = [point[0] for point in pts]
+            ys = [-point[1] for point in pts]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            span_x = max(1e-6, max_x - min_x)
+            span_y = max(1e-6, max_y - min_y)
+            scale = min((w - 18) / span_x, (h - 42) / span_y)
+            cx = x0 + w / 2
+            cy = y0 + 52
+
+            def project(index: int) -> tuple[float, float]:
+                px = cx + (pts[index][0] - (min_x + max_x) / 2) * scale
+                py = cy + ((-pts[index][1]) - (min_y + max_y) / 2) * scale
+                return px, py
+
+            severity = item.severity
+            line_color = colors.HexColor("#EF4444") if severity >= 2 else colors.HexColor("#F59E0B") if severity == 1 else colors.HexColor("#22C55E")
+            drawing.add(Rect(x0, y0, w, h, fillColor=colors.HexColor("#F8FAFC"), strokeColor=colors.HexColor("#CBD5E1")))
+            drawing.add(String(x0 + 8, y0 + h - 14, f"{item.track_id} | REBA {item.reba_score:.0f} | {item.ergonomic_score:.0f}/100", fontSize=7, fillColor=colors.HexColor("#0F172A")))
+            drawing.add(String(x0 + 8, y0 + 8, item.state.upper(), fontSize=7, fillColor=line_color))
+            for a, b in skeleton:
+                if a < len(pts) and b < len(pts):
+                    ax, ay = project(a)
+                    bx, by = project(b)
+                    drawing.add(Line(ax, ay, bx, by, strokeColor=line_color, strokeWidth=1.3))
+            for index in range(min(18, len(pts))):
+                px, py = project(index)
+                drawing.add(Circle(px, py, 1.6, fillColor=colors.HexColor("#0F172A"), strokeColor=None))
+
+        positions = [(0, 104), (235, 104), (0, 0), (235, 0)]
+        for item, (x, y) in zip(selected, positions):
+            draw_pose(item, x, y, 215, 95)
+        return drawing
+
     def _timeline_chart(self, report: QualityReport) -> Drawing:
         rows = []
         keys = []
@@ -155,7 +252,7 @@ class ReportService:
         drawing_height = max(135, 78 + len(rows) * row_height)
         drawing = Drawing(460, drawing_height)
         drawing.add(String(0, drawing_height - 16, "Evolu\u00e7\u00e3o temporal da sess\u00e3o", fontSize=11, fillColor=colors.HexColor("#14324A")))
-        drawing.add(String(0, drawing_height - 32, "Verde: conforme | Cinza: ausente sem alerta | Amarelo/Rosa/Vermelho: n?veis 1/2/3", fontSize=8, fillColor=colors.HexColor("#475569")))
+        drawing.add(String(0, drawing_height - 32, "Verde: conforme | Cinza: ausente sem alerta | Amarelo/Rosa/Vermelho: níveis 1/2/3", fontSize=8, fillColor=colors.HexColor("#475569")))
 
         start = report.session_started_at or report.generated_at
         end = report.session_ended_at or start

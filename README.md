@@ -134,3 +134,6 @@ $env:POSTURE_ENABLED="0"
 .\run_backend.ps1
 ```
 
+A postura é amostrada a cada 1 segundo por pessoa por padrão (`POSTURE_INTERVAL_SECONDS=1.0`). O sistema salva apenas dados estruturais da pose, como score, REBA, penalidades e keypoints 3D compactos. Frames, fotos e recortes da câmera não são gravados em disco.
+
+No relatório em PDF, as imagens de postura são renderizações vetoriais geradas em memória a partir desses keypoints, não fotos da câmera.

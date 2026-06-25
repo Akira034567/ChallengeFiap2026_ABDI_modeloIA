@@ -42,6 +42,7 @@ type ComplianceSnapshot = {
 type PostureSnapshot = {
   timestamp: string; track_id: string; state: string; severity: number;
   reba_score: number; ergonomic_score: number; confidence: number;
+  posture_mode?: string | null; penalties?: Record<string, number>; advice?: string[]; keypoints_3d?: number[][]; keypoints_2d?: number[][];
 };
 
 type Detection = { class_name: string; confidence: number; box: number[]; track_id?: string | null; ppe_code?: string | null; evidence?: number | null };
@@ -49,7 +50,7 @@ type Detection = { class_name: string; confidence: number; box: number[]; track_
 type PostureDetection = {
   track_id: string; box: number[]; reba_score: number; ergonomic_score: number;
   state: string; severity: number; confidence: number; posture_mode?: string | null;
-  penalties?: Record<string, number>;
+  penalties?: Record<string, number>; advice?: string[]; keypoints_3d?: number[][]; keypoints_2d?: number[][];
 };
 
 type FrameResult = {
@@ -133,6 +134,29 @@ function ppeNameMap(ppe: PPE[]) {
 function formatPpeNames(codes: string[], ppe: PPE[]) {
   const names = ppeNameMap(ppe);
   return codes.map((code) => names[code] ?? code).join(", ");
+}
+
+const POSTURE_PENALTY_LABELS: Record<string, string> = {
+  trunk: "Tronco",
+  neck: "Pescoço",
+  shoulders: "Ombros",
+  hips: "Quadril",
+  raised_shoulders: "Braços elevados",
+};
+
+function postureStateLabel(state?: string) {
+  if (state === "apto") return "Apto";
+  if (state === "atencao") return "Atenção";
+  if (state === "inapto") return "Inapto";
+  return "Sem leitura";
+}
+
+function postureRegionScores(penalties?: Record<string, number>) {
+  return Object.entries(penalties ?? {})
+    .map(([key, penalty]) => [key, Math.max(0, Math.min(100, 100 - penalty))] as [string, number])
+    .filter(([, score]) => score <= 90)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 3);
 }
 
 function presetForUser(user: User, presets: Preset[]) {
@@ -585,11 +609,45 @@ function Monitor({
         ctx.font = "13px Inter, sans-serif";
         ctx.fillText(`${det.track_id ?? ""} ${det.class_name} ${(det.confidence * 100).toFixed(0)}%`, drawX + 4, y1 * sy + 16);
       });
+      const skeleton: Array<[number, number]> = [[1,0],[2,1],[3,2],[4,0],[5,4],[6,5],[7,0],[17,7],[9,8],[10,9],[11,8],[12,11],[13,12],[14,8],[15,14],[16,15],[17,8]];
       (next.posture ?? []).forEach((posture) => {
         const [x1, y1, x2] = posture.box;
         const drawX = canvas.width - x2 * sx;
         const drawY = Math.max(22, y1 * sy - 8);
         const color = posture.severity >= 2 ?"#ef4444" : posture.severity === 1 ?"#f59e0b" : "#a78bfa";
+        const keypoints = posture.keypoints_2d ?? [];
+        if (keypoints.length) {
+          ctx.save();
+          ctx.setLineDash([7, 5]);
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.4;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 8;
+          skeleton.forEach(([a, b]) => {
+            const pa = keypoints[a];
+            const pb = keypoints[b];
+            if (!pa || !pb || (pa[2] ?? 0) < 0.25 || (pb[2] ?? 0) < 0.25) return;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width - pa[0] * sx, pa[1] * sy);
+            ctx.lineTo(canvas.width - pb[0] * sx, pb[1] * sy);
+            ctx.stroke();
+          });
+          ctx.setLineDash([]);
+          keypoints.forEach((point) => {
+            if ((point[2] ?? 0) < 0.25) return;
+            ctx.beginPath();
+            ctx.fillStyle = "rgba(2, 8, 23, .72)";
+            ctx.arc(canvas.width - point[0] * sx, point[1] * sy, 4.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.fillStyle = color;
+            ctx.arc(canvas.width - point[0] * sx, point[1] * sy, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          });
+          ctx.restore();
+        }
         const label = `Postura ${posture.track_id}: ${posture.state.toUpperCase()} · REBA ${posture.reba_score.toFixed(0)} · ${posture.ergonomic_score.toFixed(0)}/100`;
         ctx.font = "700 13px Inter, sans-serif";
         const width = ctx.measureText(label).width + 12;
@@ -610,7 +668,12 @@ function Monitor({
     ppe: track.ppe,
     compliant: session.required_ppe.every((code) => track.ppe[code]?.state === "present"),
   }));
-  const postureByTrack = new Map((result?.posture ?? []).map((item) => [item.track_id, item]));
+  const postureItems = result?.posture ?? [];
+  const postureByTrack = new Map(postureItems.map((item) => [item.track_id, item]));
+  function postureForTrack(trackId: string) {
+    return postureByTrack.get(trackId)
+      ?? (resetTracks.length === 1 && postureItems.length === 1 ?postureItems[0] : undefined);
+  }
   const hasResetTracks = resetTracks.length > 0;
   const resetReady = session.machine_locked && hasResetTracks && resetTracks.every((track) =>
     session.required_ppe.every((code) => {
@@ -711,14 +774,44 @@ function Monitor({
                 {displayCompliant ?"Conforme" : trackBlocked ?"Bloqueado" : "Alerta"}
               </span>
             </div>
-            {postureByTrack.get(track.track_id) && (
-              <div className={`track-posture ${postureByTrack.get(track.track_id)?.state ?? ""}`}>
-                <span>Postura ergonômica</span>
-                <strong>
-                  {postureByTrack.get(track.track_id)?.state === "apto" ?"Apto" : postureByTrack.get(track.track_id)?.state === "atencao" ?"Atenção" : "Inapto"}
-                  {" · REBA "}{postureByTrack.get(track.track_id)?.reba_score.toFixed(0)}
-                  {" · "}{postureByTrack.get(track.track_id)?.ergonomic_score.toFixed(0)}/100
-                </strong>
+            {postureForTrack(track.track_id) ? (() => {
+              const posture = postureForTrack(track.track_id)!;
+              const regionScores = postureRegionScores(posture.penalties);
+              return (
+                <div className={`track-posture ${posture.state ?? ""}`}>
+                  <div className="track-posture-head">
+                    <span>Postura ergonômica</span>
+                    <strong>
+                      {postureStateLabel(posture.state)}
+                      {" · REBA "}{posture.reba_score.toFixed(0)}
+                      {" · "}{posture.ergonomic_score.toFixed(0)}/100
+                    </strong>
+                  </div>
+                  <div className="track-posture-advice">
+                    {posture.advice?.[0] ?? "Mantenha a postura estável por alguns segundos para uma leitura melhor."}
+                  </div>
+                  {regionScores.length > 0 && (
+                    <div className="posture-penalty-list">
+                      {regionScores.map(([key, value]) => (
+                        <div className="posture-penalty" key={key}>
+                          <span>{POSTURE_PENALTY_LABELS[key] ?? key}</span>
+                          <div><i style={{ width: `${Math.max(4, Math.min(100, value))}%` }} /></div>
+                          <strong>{value.toFixed(0)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })() : (
+              <div className="track-posture pending">
+                <div className="track-posture-head">
+                  <span>Postura ergonômica</span>
+                  <strong>Aguardando leitura</strong>
+                </div>
+                <div className="track-posture-advice">
+                  Fique com o corpo inteiro visível na câmera por alguns segundos.
+                </div>
               </div>
             )}
             <div className="track-ppe-list">
